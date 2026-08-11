@@ -1,0 +1,45 @@
+name: Unpackd
+options:
+  bundleIdPrefix: com.unpackd
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+packages:
+  KeyboardKit:
+    url: https://github.com/KeyboardKit/KeyboardKit
+    from: "10.7.3"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: ""          # <- set your team ID
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  Unpackd:
+    type: application
+    platform: iOS
+    sources: [Unpackd]
+    dependencies:
+      - target: UnpackdKeyboard
+        embed: true
+      - package: KeyboardKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unpackd.app
+        INFOPLIST_FILE: Unpackd/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Unpackd/Unpackd.entitlements
+
+  UnpackdKeyboard:
+    type: app-extension
+    platform: iOS
+    sources: [UnpackdKeyboard]
+    dependencies:
+      - package: KeyboardKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unpackd.app.keyboard
+        INFOPLIST_FILE: UnpackdKeyboard/Info.plist
+        CODE_SIGN_ENTITLEMENTS: UnpackdKeyboard/UnpackdKeyboard.entitlements

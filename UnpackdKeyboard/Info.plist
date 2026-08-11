@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Unpackd</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.keyboard-service</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>IsASCIICapable</key>
+			<false/>
+			<key>PrefersRightToLeft</key>
+			<false/>
+			<key>PrimaryLanguage</key>
+			<string>en-US</string>
+			<!-- Full Access is NOT required. The rewrite is fully on-device via
+			     Foundation Models, so we never need network. Leaving this false
+			     is a real product advantage: "Allow Full Access" is an alarming
+			     prompt for a keyboard that reads what you type while upset. -->
+			<key>RequestsOpenAccess</key>
+			<false/>
+		</dict>
+	</dict>
+</dict>
+</plist>

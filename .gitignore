@@ -1,0 +1,16 @@
+tmp/
+# Ignore common temporary, dependency, and build files
+node_modules/
+.dist/
+dist/
+build/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*.swo
