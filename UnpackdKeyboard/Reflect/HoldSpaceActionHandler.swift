@@ -24,7 +24,7 @@ import KeyboardKit
 /// If user testing says the cursor loss hurts, rebinding is a one-line change
 /// at the call site: assign a different `trigger`. `ReflectSession` never knew
 /// what opened it.
-final class HoldSpaceActionHandler: KeyboardAction.StandardActionHandler {
+final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
 
     /// Which gesture/key combination opens the reflect panel.
     ///

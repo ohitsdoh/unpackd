@@ -19,18 +19,18 @@ class KeyboardViewController: KeyboardInputViewController {
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
-        // setup(for:) builds `state` and `services`, so it has to come before
-        // we replace the action handler or touch settings.
-        setup(for: .unpackd)
+        // setupKeyboardKit(for:) builds `state` and `services`, so it has to
+        // come before we replace the action handler or touch settings.
+        setupKeyboardKit(for: .unpackd)
 
         session = ReflectSession(engine: engine)
 
         // Disables KeyboardKit's space cursor drag (see isSpaceCursorDragEnabled).
         // Our action handler swallows the long-press before the locale menu can
         // appear; the nil menus below make sure nothing else claims the key.
-        state.keyboardContext.settings.spaceLongPressBehavior = .openLocaleContextMenu
-        state.keyboardContext.settings.spaceContextMenuLeading = nil
-        state.keyboardContext.settings.spaceContextMenuTrailing = nil
+        state.keyboardContext.settings.spacebarLongPressBehavior = .openLocaleContextMenu
+        state.keyboardContext.settings.spacebarMenuLeading = KeyboardKit.Keyboard.SpacebarMenuType.none
+        state.keyboardContext.settings.spacebarMenuTrailing = KeyboardKit.Keyboard.SpacebarMenuType.none
 
         let handler = HoldSpaceActionHandler(controller: self)
         handler.onTrigger = { [weak self] in
@@ -59,10 +59,7 @@ class KeyboardViewController: KeyboardInputViewController {
                         self?.applyRewrite(text)
                     },
                     keyboardView: {
-                        KeyboardView(
-                            state: controller.state,
-                            services: controller.services
-                        )
+                        KeyboardView(services: controller.services)
                     }
                 )
             )
@@ -138,10 +135,16 @@ class KeyboardViewController: KeyboardInputViewController {
 extension KeyboardApp {
 
     // No licenseKey: this is the MIT open-source KeyboardKit, not Pro.
+    //
+    // appGroupId is nil while signing with a free Apple ID — personal teams
+    // cannot provision App Groups, and passing an id we hold no entitlement
+    // for makes KeyboardKit reach for a container that does not exist. The
+    // group is only used to sync settings between app and extension, which
+    // nothing here does yet. Restore "group.com.unpackd.app" here and in both
+    // .entitlements files when moving to a paid team.
     static var unpackd: KeyboardApp {
         .init(
             name: "Unpackd",
-            appGroupId: "group.com.unpackd.app",
             locales: [.english]
         )
     }

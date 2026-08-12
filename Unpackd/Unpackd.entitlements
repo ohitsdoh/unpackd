@@ -2,9 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.com.unpackd.app</string>
-	</array>
+	<!-- App Group removed for free-Apple-ID signing: personal teams cannot
+	     provision com.apple.security.application-groups, and Xcode fails to
+	     sign both targets if it is present. Nothing reads or writes the group
+	     yet — KeyboardKit only uses it to sync settings between app and
+	     extension. Restore from .entitlements-backup/ (both files, plus
+	     appGroupId in KeyboardViewController) once enrolled in the paid
+	     Developer Program. -->
 </dict>
 </plist>
