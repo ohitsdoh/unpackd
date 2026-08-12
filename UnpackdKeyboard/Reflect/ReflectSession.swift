@@ -31,10 +31,6 @@ final class ReflectSession {
     private(set) var draft: String = ""
     /// Which rewrite the user is currently looking at.
     var selectedRewrite: Int = 0
-    /// What the user tapped on the emotion chips, if anything. Optional by
-    /// design — being made to label your feeling before you can get help is
-    /// its own small friction.
-    var selfReportedEmotion: Emotion?
 
     private let engine: ReflectionEngine
     private var task: Task<Void, Never>?
@@ -51,7 +47,6 @@ final class ReflectSession {
     func begin(draft: String) {
         self.draft = draft
         self.selectedRewrite = 0
-        self.selfReportedEmotion = nil
         // Availability is checked up front rather than after the user picks
         // "Rewrite" — offering an action that is going to fail is worse than
         // not offering it.
@@ -86,10 +81,10 @@ final class ReflectSession {
         // this session, and through it the engine, for the whole of an
         // abandoned inference, which is exactly the moment footprint is
         // highest and the user has already dismissed the panel.
-        task = Task { [weak self, engine, draft, selfReportedEmotion] in
+        task = Task { [weak self, engine, draft] in
             let outcome: Phase
             do {
-                let reflection = try await engine.reflect(on: draft, selfReported: selfReportedEmotion)
+                let reflection = try await engine.reflect(on: draft)
                 outcome = .reviewing(reflection)
             } catch let reason as ReflectionUnavailable {
                 outcome = .unavailable(reason)

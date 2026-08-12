@@ -10,17 +10,15 @@ import Foundation
 
 /// A tone the model can detect in the drafted message.
 ///
-/// These are a closed set on purpose: the chips in the reflect panel are
-/// fixed UI, and constrained decoding (`@Guide`) against a closed enum is
-/// what stops a 3B model from inventing a sixth emotion we can't render.
-enum Emotion: String, Codable, CaseIterable, Identifiable {
+/// A closed set on purpose: constrained decoding (`@Guide`) against a closed
+/// enum is what stops a 3B model from inventing a sixth emotion the badge on
+/// the review screen can't render.
+enum Emotion: String, Codable {
     case angry
     case hurt
     case frustrated
     case overwhelmed
     case anxious
-
-    var id: String { rawValue }
 
     var label: String {
         switch self {
@@ -114,10 +112,12 @@ protocol ReflectionEngine: AnyObject {
 
     /// Produce a reflection for a draft.
     ///
-    /// - Parameter selfReported: What the user said they were feeling, if they
-    ///   tapped a chip. Steers the rewrite; the model still reports its own
-    ///   reading of the draft, which may differ.
-    func reflect(on draft: String, selfReported: Emotion?) async throws -> Reflection
+    /// The emotion comes back from the model's own reading of the draft. There
+    /// is deliberately no self-report input: asking the user to label their
+    /// feeling before they've been helped is friction, and feeding that label
+    /// into the same call that reports the emotion would only make the model
+    /// echo it back.
+    func reflect(on draft: String) async throws -> Reflection
 }
 
 // MARK: - Preview / simulator stub
@@ -128,10 +128,10 @@ final class StubReflectionEngine: ReflectionEngine {
     var availability: Result<Void, ReflectionUnavailable> { .success(()) }
     func prewarm() {}
 
-    func reflect(on draft: String, selfReported: Emotion?) async throws -> Reflection {
+    func reflect(on draft: String) async throws -> Reflection {
         try? await Task.sleep(for: .milliseconds(600))
         return Reflection(
-            detectedEmotion: selfReported ?? .angry,
+            detectedEmotion: .angry,
             rewrites: [
                 .init(id: 0, text: "I felt hurt when I didn't hear back. Can we talk?", toneLabel: "Clear"),
                 .init(id: 1, text: "I've been waiting to hear from you and it's been weighing on me.", toneLabel: "Calm"),

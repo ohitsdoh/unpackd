@@ -89,43 +89,25 @@ struct ReflectPanel: View {
 
     // MARK: Chooser
 
+    /// Two actions, both of which do something real.
+    ///
+    /// "Reflect" and "Save for later" were cut rather than kept as stubs:
+    /// Reflect was wired to `breathe()`, so it was Breathe with a different
+    /// icon, and "Save for later" only called `dismiss()` and saved nothing.
+    ///
+    /// No self-report step either: the emotion the user sees is the model's
+    /// reading of what they actually wrote, shown after the rewrite. Asking
+    /// them to label the feeling first was friction that only steered the
+    /// model into echoing the label back.
     private var chooser: some View {
-        VStack(spacing: 20) {
-            // Emotion chips are a self-report, not a diagnosis — the model's
-            // own guess is shown only after a rewrite, so the keyboard never
-            // tells the user how they feel before they've said anything.
-            //
-            // Tapping one is optional and steers the rewrite (see
-            // ReflectSession.selfReportedEmotion). Tapping the selected chip
-            // again clears it.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Emotion.allCases) { emotion in
-                        let isSelected = session.selfReportedEmotion == emotion
-                        Button {
-                            session.selfReportedEmotion = isSelected ? nil : emotion
-                        } label: {
-                            Pill(
-                                emotion.label,
-                                size: .chip,
-                                fill: isSelected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-                                stroked: true
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-                    }
-                }
-                .padding(.horizontal, 2)
-            }
-
-            HStack(spacing: 0) {
-                action("Breathe", icon: "wind", tint: .blue) { session.breathe() }
-                action("Reflect", icon: "circle.circle", tint: .indigo) { session.breathe() }
-                action("Rewrite", icon: "pencil.line", tint: .orange) { session.rewrite() }
-                action("Save for later", icon: "bookmark", tint: .gray) { session.dismiss() }
-            }
+        // Fixed-width columns rather than `maxWidth: .infinity`: with only two
+        // actions, filling the panel would strand each 46pt circle in the
+        // middle of a half-width column.
+        HStack(spacing: 32) {
+            action("Breathe", icon: "wind", tint: .blue) { session.breathe() }
+            action("Rewrite", icon: "pencil.line", tint: .orange) { session.rewrite() }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func action(
@@ -146,7 +128,7 @@ struct ReflectPanel: View {
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: 84)
         }
         .buttonStyle(.plain)
     }

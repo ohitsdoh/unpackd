@@ -17,54 +17,50 @@ struct KeyboardRootView<KeyboardView: View>: View {
     let onApplyRewrite: (String) -> Void
     @ViewBuilder let keyboardView: () -> KeyboardView
 
-    /// Height of the keys themselves. Measured rather than assumed, because it
-    /// varies with device, orientation and whether an input toolbar is shown.
+    /// Height of the keys plus the autocomplete toolbar above them. Measured
+    /// rather than assumed, because it varies with device and orientation.
     @State private var keyboardHeight: CGFloat = 0
     @State private var panelHeight: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            if session.isOpen {
-                ReflectPanel(session: session, onApplyRewrite: onApplyRewrite)
+        // ZStack, not a plain VStack: the wash has to draw over the panel *and*
+        // the keys to reach the keyboard's edges. As a transition on the panel
+        // it could only ever mask the panel's own bounds. See RadialWash.
+        ZStack {
+            VStack(spacing: 0) {
+                if session.isOpen {
+                    ReflectPanel(session: session, onApplyRewrite: onApplyRewrite)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height }
+                            action: { panelHeight = $0 }
+                        // Just a fade. The panel arriving is the *result* of the
+                        // wash passing over it, not a second animation competing
+                        // with it, so it gets no movement of its own.
+                        .transition(.opacity)
+                }
+
+                keyboardView()
                     .onGeometryChange(for: CGFloat.self) { $0.size.height }
-                        action: { panelHeight = $0 }
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                        action: { keyboardHeight = $0 }
             }
 
-            keyboardView()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height }
-                    action: { keyboardHeight = $0 }
-                // The soft white glow under the keys from the mockups.
-                .overlay(alignment: .bottom) {
-                    if session.isOpen {
-                        SpaceGlow().allowsHitTesting(false)
-                    }
-                }
+            // Spans the whole stack, so the circle sweeps across the keys on
+            // its way to the corners.
+            RadialWash(progress: session.isOpen ? 1 : 0)
         }
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: session.isOpen)
+        // Slow and linear-ish rather than eased. `easeOut` front-loads the
+        // motion, which is exactly what made the old version read as a snap;
+        // this is meant to be watched expanding. Not a spring either — an
+        // expanding circle that overshoots reads as a wobble.
+        .animation(.easeInOut(duration: 0.6), value: session.isOpen)
+        // Height keeps its own faster spring: this drives the keyboard frame
+        // growing, and a little softness there is what stops the host app's
+        // content from snapping upward. Deliberately quicker than the wash, so
+        // the panel has settled into place by the time the circle reaches it.
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: panelHeight)
         .onChange(of: keyboardHeight + (session.isOpen ? panelHeight : 0)) { _, total in
             guard total > 0 else { return }
             onHeightChange(total)
         }
-    }
-}
-
-/// The diffuse light that blooms from the spacebar while a reflection is open.
-private struct SpaceGlow: View {
-    var body: some View {
-        Ellipse()
-            .fill(
-                RadialGradient(
-                    colors: [.white.opacity(0.9), .white.opacity(0)],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: 120
-                )
-            )
-            .frame(height: 120)
-            .blur(radius: 18)
-            .padding(.bottom, 24)
     }
 }
 

@@ -43,6 +43,17 @@ struct RewriteView: View {
                     badgeTint: .green
                 )
             }
+            // Swiping the cards is what people actually try; the dots below are
+            // an indicator first and a fallback target second. `minimumDistance`
+            // keeps this from stealing taps meant for the buttons.
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 20)
+                    .onEnded { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        page(by: value.translation.width < 0 ? 1 : -1)
+                    }
+            )
 
             if reflection.rewrites.count > 1 {
                 pager
@@ -67,6 +78,17 @@ struct RewriteView: View {
 
     private var currentRewrite: Rewrite? {
         reflection.rewrites.indices.contains(selection) ? reflection.rewrites[selection] : reflection.rewrites.first
+    }
+
+    /// Move `offset` rewrites from the current one, clamped to what exists.
+    ///
+    /// The single place selection changes. Swipe, dot tap and the VoiceOver
+    /// adjustable action all route through here so the bounds and the
+    /// animation can't drift apart.
+    private func page(by offset: Int) {
+        let target = min(max(selection + offset, 0), reflection.rewrites.count - 1)
+        guard target != selection else { return }
+        withAnimation(.snappy(duration: 0.2)) { selection = target }
     }
 
     private func messageCard(
@@ -98,23 +120,29 @@ struct RewriteView: View {
         }
     }
 
-    /// Dots to move between alternatives. Tapping cycles; the model produced
-    /// three, and one of them is usually closer to how the user actually talks.
+    /// Dots to move between alternatives. The model produced three, and one of
+    /// them is usually closer to how the user actually talks.
+    ///
+    /// The dot is 6pt but its tap target is padded to 22×22 — a 6pt target is
+    /// unhittable, especially on a keyboard panel where the thumb is nowhere
+    /// near where the eyes are.
     private var pager: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ForEach(reflection.rewrites.indices, id: \.self) { index in
                 Circle()
                     .fill(index == selection ? Color.primary.opacity(0.7) : Color.primary.opacity(0.18))
                     .frame(width: 6, height: 6)
-                    .onTapGesture { selection = index }
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+                    .onTapGesture { page(by: index - selection) }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Rewrite \(selection + 1) of \(reflection.rewrites.count)")
         .accessibilityAdjustableAction { direction in
             switch direction {
-            case .increment: selection = min(selection + 1, reflection.rewrites.count - 1)
-            case .decrement: selection = max(selection - 1, 0)
+            case .increment: page(by: 1)
+            case .decrement: page(by: -1)
             @unknown default: break
             }
         }

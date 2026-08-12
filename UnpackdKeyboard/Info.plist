@@ -31,12 +31,30 @@
 			<false/>
 			<key>PrimaryLanguage</key>
 			<string>en-US</string>
-			<!-- Full Access is NOT required. The rewrite is fully on-device via
-			     Foundation Models, so we never need network. Leaving this false
-			     is a real product advantage: "Allow Full Access" is an alarming
-			     prompt for a keyboard that reads what you type while upset. -->
+			<!-- Full Access is requested for HAPTICS, not for network.
+			     UIFeedbackGenerator is inert in a keyboard extension until the
+			     user grants Full Access, and the hold-space capture needs to be
+			     felt: a held spacebar that does nothing for 300ms reads as a
+			     dropped key. It also unlocks the shared container, so learned
+			     autocorrect words and settings can persist between app and
+			     keyboard (see appGroupId in KeyboardApp.unpackd).
+
+			     THIS DOES NOT MEAN WE GO ONLINE. The rewrite stays fully
+			     on-device via Foundation Models, and there is no URLSession
+			     anywhere in this target. Adding a network call later is a
+			     product decision, not a technical one that this key settles.
+			     Apple's rule for open-access keyboards: "Do not store received
+			     keystroke or voice data except to provide services that are
+			     obvious to the user."
+
+			     THE COST IS REAL: iOS shows "Full Access ... allows the
+			     developer to transmit anything you type" on install. For a
+			     keyboard that reads what you type at your worst moments, that
+			     prompt is the single biggest install-time drop-off. If device
+			     testing says the haptic is not worth it, set this back to
+			     false — nothing else in the codebase depends on it. -->
 			<key>RequestsOpenAccess</key>
-			<false/>
+			<true/>
 		</dict>
 	</dict>
 </dict>

@@ -32,6 +32,32 @@ class KeyboardViewController: KeyboardInputViewController {
         state.keyboardContext.settings.spacebarMenuLeading = KeyboardKit.Keyboard.SpacebarMenuType.none
         state.keyboardContext.settings.spacebarMenuTrailing = KeyboardKit.Keyboard.SpacebarMenuType.none
 
+        // Autocomplete has to be installed before the action handler, because
+        // StandardKeyboardActionHandler captures `autocompleteService` at init.
+        // Assigning it afterwards leaves the handler holding the disabled one.
+        services.autocompleteService = TextCheckerAutocompleteService(
+            locale: state.keyboardContext.locale
+        )
+
+        // Autocorrect is opt-in per keyboard, and defaults off in a fresh
+        // install. The pipeline in StandardKeyboardActionHandler checks these
+        // before it will apply anything, so without them the service runs and
+        // its suggestions are silently discarded.
+        state.autocompleteContext.settings.isAutocompleteEnabled = true
+        state.autocompleteContext.settings.isAutocorrectEnabled = true
+
+        // Smart punctuation (`--` -> em dash) is NOT registered here.
+        // `autocompleteContext.autocorrectDictionary` is only read by
+        // KeyboardKit's Pro-gated StandardAutocompleteService, which we cannot
+        // construct — so replacements written there are stored and never
+        // consulted. It lives in TextCheckerAutocompleteService instead, which
+        // is the code path this target actually owns.
+
+        // Haptics default to OFF in KeyboardKit, so granting Full Access alone
+        // would still produce no vibration on the hold-space capture. Both
+        // switches are needed: this one, and the user's Full Access grant.
+        state.feedbackContext.settings.isHapticFeedbackEnabled = true
+
         let handler = HoldSpaceActionHandler(controller: self)
         handler.onTrigger = { [weak self] in
             guard let self else { return }
@@ -59,6 +85,9 @@ class KeyboardViewController: KeyboardInputViewController {
                         self?.applyRewrite(text)
                     },
                     keyboardView: {
+                        // The ~48pt above the keys is the autocomplete toolbar
+                        // that `KeyboardView(services:)` builds for us, now fed
+                        // by TextCheckerAutocompleteService.
                         KeyboardView(services: controller.services)
                     }
                 )
@@ -102,6 +131,13 @@ class KeyboardViewController: KeyboardInputViewController {
         deleteBackward(times: existing.count)
 
         proxy.insertText(text)
+
+        // The rewrite is finished prose, not a word in progress. Without this
+        // the toolbar keeps showing suggestions computed from the draft we
+        // just deleted, and a following space could autocorrect the rewrite's
+        // last word against that stale state.
+        resetAutocomplete()
+
         session.dismiss()
     }
 
