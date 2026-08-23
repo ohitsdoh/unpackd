@@ -17,6 +17,13 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Same ITMS-90683 requirement as the container app: KeyboardKit
+	     references the microphone API for dictation. Apple flagged only
+	     Unpackd.app, but this target links the same framework, so the key
+	     goes here too rather than risking a second rejection. Nothing in
+	     this extension records audio. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Unpackd does not use the microphone. Dictation is provided by the system keyboard, not by Unpackd.</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
