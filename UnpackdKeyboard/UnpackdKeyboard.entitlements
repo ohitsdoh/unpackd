@@ -2,8 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App Group removed for free-Apple-ID signing. See the matching comment
-	     in Unpackd/Unpackd.entitlements; restore from
-	     .entitlements-backup/ when on a paid team. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.unpackd.app</string>
+	</array>
 </dict>
 </plist>

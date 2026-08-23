@@ -13,8 +13,14 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    DEVELOPMENT_TEAM: ""          # <- set your team ID
+    # Your ORG's 10-char team ID (Apple Developer > Membership), not a
+    # personal team. Uploading to App Store Connect from a personal team is
+    # impossible, so a wrong value here fails at Distribute, not at build.
+    DEVELOPMENT_TEAM: "8SZ8KXAYPB"
+    CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
+    # Must be unique per upload. App Store Connect rejects a build number it
+    # has already seen, even if the archive differs — bump for every upload.
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -31,6 +37,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.unpackd.app
         INFOPLIST_FILE: Unpackd/Info.plist
         CODE_SIGN_ENTITLEMENTS: Unpackd/Unpackd.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   UnpackdKeyboard:
     type: app-extension

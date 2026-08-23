@@ -172,15 +172,15 @@ extension KeyboardApp {
 
     // No licenseKey: this is the MIT open-source KeyboardKit, not Pro.
     //
-    // appGroupId is nil while signing with a free Apple ID — personal teams
-    // cannot provision App Groups, and passing an id we hold no entitlement
-    // for makes KeyboardKit reach for a container that does not exist. The
-    // group is only used to sync settings between app and extension, which
-    // nothing here does yet. Restore "group.com.unpackd.app" here and in both
-    // .entitlements files when moving to a paid team.
+    // appGroupId must stay in sync with the `com.apple.security.application-groups`
+    // entitlement in BOTH targets. If the id here names a group the build holds
+    // no entitlement for, KeyboardKit reaches for a container that does not
+    // exist — so change all three together, or none. The group only syncs
+    // settings between app and extension, which nothing reads yet.
     static var unpackd: KeyboardApp {
         .init(
             name: "Unpackd",
+            appGroupId: "group.com.unpackd.app",
             locales: [.english]
         )
     }
