@@ -180,7 +180,7 @@ extension KeyboardApp {
     static var unpackd: KeyboardApp {
         .init(
             name: "Unpackd",
-            appGroupId: "group.com.unpackd.app",
+            appGroupId: "group.com.hoamedigital.unpackd",
             locales: [.english]
         )
     }
