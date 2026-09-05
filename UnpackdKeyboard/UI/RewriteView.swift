@@ -2,8 +2,6 @@
 //  RewriteView.swift
 //  UnpackdKeyboard
 //
-//  Original vs. rewrite, with the choice left to the user.
-//
 
 import SwiftUI
 
@@ -15,45 +13,9 @@ struct RewriteView: View {
     let onUse: (String) -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Text("Here's an improved version of your message.")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-
-            // Showing the original alongside the rewrite is a deliberate
-            // product choice: the user should see what changed and be able to
-            // disagree, not be handed a replacement to accept blindly.
-            HStack(alignment: .top, spacing: 10) {
-                messageCard(
-                    caption: "Original",
-                    text: original,
-                    badge: reflection.detectedEmotion.label,
-                    badgeTint: .red
-                )
-
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 34)
-
-                messageCard(
-                    caption: "Rewrite",
-                    text: currentRewrite?.text ?? "",
-                    badge: currentRewrite?.toneLabel ?? "",
-                    badgeTint: .green
-                )
-            }
-            // Swiping the cards is what people actually try; the dots below are
-            // an indicator first and a fallback target second. `minimumDistance`
-            // keeps this from stealing taps meant for the buttons.
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 20)
-                    .onEnded { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                        page(by: value.translation.width < 0 ? 1 : -1)
-                    }
-            )
+        VStack(spacing: 12) {
+            originalSummary
+            rewriteCard
 
             if reflection.rewrites.count > 1 {
                 pager
@@ -63,76 +25,88 @@ struct RewriteView: View {
                 if let text = currentRewrite?.text { onUse(text) }
             } label: {
                 Text("Use this message")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(KeyboardTheme.onAccent)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
                     .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.primary)
+                        Capsule()
+                            .fill(KeyboardTheme.accent)
                     )
-                    .foregroundStyle(Color(uiColor: .systemBackground))
             }
             .buttonStyle(.plain)
         }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    page(by: value.translation.width < 0 ? 1 : -1)
+                }
+        )
     }
 
     private var currentRewrite: Rewrite? {
         reflection.rewrites.indices.contains(selection) ? reflection.rewrites[selection] : reflection.rewrites.first
     }
 
-    /// Move `offset` rewrites from the current one, clamped to what exists.
-    ///
-    /// The single place selection changes. Swipe, dot tap and the VoiceOver
-    /// adjustable action all route through here so the bounds and the
-    /// animation can't drift apart.
+    private var originalSummary: some View {
+        HStack(spacing: 8) {
+            Pill(reflection.detectedEmotion.label, tint: Color(red: 0.710, green: 0.305, blue: 0.305))
+            Text(original.isEmpty ? "No draft text found." : original)
+                .font(.system(size: 12))
+                .foregroundStyle(KeyboardTheme.mutedInk)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private var rewriteCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(currentRewrite?.toneLabel ?? "Rewrite")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1.0)
+                    .textCase(.uppercase)
+                    .foregroundStyle(KeyboardTheme.mutedInk)
+                Spacer()
+                Text("\(selection + 1)/\(max(reflection.rewrites.count, 1))")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(KeyboardTheme.mutedInk)
+            }
+
+            Text(currentRewrite?.text ?? "")
+                .font(.system(size: 15))
+                .foregroundStyle(KeyboardTheme.ink)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(KeyboardTheme.cardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(KeyboardTheme.border, lineWidth: 0.75)
+        )
+    }
+
     private func page(by offset: Int) {
         let target = min(max(selection + offset, 0), reflection.rewrites.count - 1)
         guard target != selection else { return }
         withAnimation(.snappy(duration: 0.2)) { selection = target }
     }
 
-    private func messageCard(
-        caption: String,
-        text: String,
-        badge: String,
-        badgeTint: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(caption)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text(text)
-                    .font(.system(size: 14))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !badge.isEmpty {
-                    Pill(badge, tint: badgeTint)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            )
-        }
-    }
-
-    /// Dots to move between alternatives. The model produced three, and one of
-    /// them is usually closer to how the user actually talks.
-    ///
-    /// The dot is 6pt but its tap target is padded to 22×22 — a 6pt target is
-    /// unhittable, especially on a keyboard panel where the thumb is nowhere
-    /// near where the eyes are.
     private var pager: some View {
         HStack(spacing: 0) {
             ForEach(reflection.rewrites.indices, id: \.self) { index in
                 Circle()
-                    .fill(index == selection ? Color.primary.opacity(0.7) : Color.primary.opacity(0.18))
+                    .fill(index == selection ? KeyboardTheme.ink.opacity(0.72) : KeyboardTheme.ink.opacity(0.18))
                     .frame(width: 6, height: 6)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 22, height: 18)
                     .contentShape(Rectangle())
                     .onTapGesture { page(by: index - selection) }
             }

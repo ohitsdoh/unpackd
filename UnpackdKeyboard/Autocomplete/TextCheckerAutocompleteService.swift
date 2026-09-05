@@ -31,7 +31,8 @@ import UIKit
 /// `UITextChecker` is the same on-device spelling engine the stock keyboard
 /// uses. It costs no memory budget worth worrying about against the ~60MB
 /// extension cap (it is a system service, not a bundled dictionary) and needs
-/// no network, so `RequestsOpenAccess` stays `false`.
+/// no network. `RequestsOpenAccess` is enabled elsewhere for haptics and shared
+/// app settings, not for remote autocomplete.
 ///
 /// CONCURRENCY — three constraints that only have one common solution
 ///
@@ -129,6 +130,7 @@ final class TextCheckerAutocompleteService: @preconcurrency AutocompleteService 
         ignoredWords.append(word)
     }
 
+    @MainActor
     func learnWord(_ word: String) {
         guard !hasLearnedWord(word) else { return }
         learnedWords.append(word)
@@ -141,6 +143,7 @@ final class TextCheckerAutocompleteService: @preconcurrency AutocompleteService 
         ignoredWords.removeAll { $0.caseInsensitiveCompare(word) == .orderedSame }
     }
 
+    @MainActor
     func unlearnWord(_ word: String) {
         learnedWords.removeAll { $0.caseInsensitiveCompare(word) == .orderedSame }
         UITextChecker.unlearnWord(word)
@@ -365,6 +368,7 @@ private extension TextCheckerAutocompleteService {
     /// forms like "en_US"; falling back to plain "en" keeps a bare `Locale`
     /// working, and an unavailable language degrades to no suggestions rather
     /// than to a crash.
+    @MainActor
     var languageCode: String {
         let identifier = locale.identifier.replacingOccurrences(of: "-", with: "_")
         let available = UITextChecker.availableLanguages

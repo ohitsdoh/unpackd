@@ -57,6 +57,18 @@ final class ReflectSession {
         }
     }
 
+    func beginBreathe() {
+        draft = ""
+        selectedRewrite = 0
+        phase = .breathing
+    }
+
+    func beginRewrite(draft: String) {
+        begin(draft: draft)
+        guard case .choosing = phase else { return }
+        rewrite()
+    }
+
     func dismiss() {
         task?.cancel()
         task = nil

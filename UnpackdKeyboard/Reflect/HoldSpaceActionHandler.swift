@@ -8,6 +8,11 @@
 import Foundation
 import KeyboardKit
 
+enum KeyboardPracticeAction {
+    case breathe
+    case rewrite
+}
+
 /// Intercepts long-press on the space key and opens the reflect panel
 /// instead of performing KeyboardKit's default behaviour.
 ///
@@ -35,6 +40,20 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
         gesture == .longPress && action == .space
     }
 
+    var practiceTrigger: (Keyboard.Gesture, KeyboardAction) -> KeyboardPracticeAction? = { gesture, action in
+        guard gesture == .longPress else { return nil }
+        guard case .character(let value) = action else { return nil }
+
+        switch value.uppercased() {
+        case "B" where KeyboardPracticeSettings.isEnabled("B"):
+            return .breathe
+        case "R" where KeyboardPracticeSettings.isEnabled("R"):
+            return .rewrite
+        default:
+            return nil
+        }
+    }
+
     /// The rest of the gesture sequence that `trigger` starts, and which must
     /// be swallowed rather than handled normally.
     ///
@@ -60,6 +79,7 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
 
     /// Called when the trigger fires.
     var onTrigger: (() -> Void)?
+    var onPracticeTrigger: ((KeyboardPracticeAction) -> Void)?
 
     /// Set when `trigger` fires, cleared by the first matching `triggerTail`.
     private var didTriggerOnCurrentPress = false
@@ -78,15 +98,20 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
             // reads as a key that stuck. Held space that does nothing for
             // 300ms otherwise reads as a dropped key.
             //
-            // Inert unless the user granted Full Access: UIFeedbackGenerator
-            // does nothing in an extension without it (RequestsOpenAccess is
-            // true in Info.plist, but the user still has to allow it in
-            // Settings). The visual glow carries the moment regardless, so
-            // the capture is never entirely unannounced.
+            // The visual glow carries the moment if haptics are unavailable in
+            // the current extension context, so the capture is never entirely
+            // unannounced.
             triggerHapticFeedback(.mediumImpact)
             onTrigger?()
             return  // Deliberately no `super` — this swallows cursor drag
                     // (tryUpdateSpaceDragState) and the locale menu.
+        }
+
+        if let practiceAction = practiceTrigger(gesture, action) {
+            didTriggerOnCurrentPress = true
+            triggerHapticFeedback(.mediumImpact)
+            onPracticeTrigger?(practiceAction)
+            return
         }
 
         // Swallow the tail of the gesture that opened the panel — the release

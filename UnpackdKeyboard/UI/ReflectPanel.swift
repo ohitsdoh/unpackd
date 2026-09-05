@@ -2,15 +2,11 @@
 //  ReflectPanel.swift
 //  UnpackdKeyboard
 //
-//  The card that appears above the keys when the user holds space.
-//
 
 import SwiftUI
 
 struct ReflectPanel: View {
 
-    /// `@Bindable`, not `@State`: the session is owned by the controller, and
-    /// this view needs to derive `$session.selectedRewrite` for the pager.
     @Bindable var session: ReflectSession
     let onApplyRewrite: (String) -> Void
 
@@ -18,51 +14,57 @@ struct ReflectPanel: View {
         VStack(spacing: 0) {
             header
             content
-                .padding(.horizontal, 16)
-                .padding(.bottom, 18)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
         }
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.background)
-                .shadow(color: .black.opacity(0.10), radius: 18, y: 6)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(KeyboardTheme.panelBackground)
+                .shadow(color: .black.opacity(0.12), radius: 18, y: 5)
+        )
+        .overlay(
+            // A literal white hairline read as a bright halo on the dark
+            // panel; `border` is the adaptive equivalent.
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(KeyboardTheme.border, lineWidth: 0.75)
         )
         .padding(.horizontal, 8)
         .padding(.bottom, 10)
     }
 
-    // MARK: Header
-
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
             Image(systemName: "sparkles")
-                .foregroundStyle(.secondary)
-            Spacer()
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(KeyboardTheme.mutedInk)
+
             Text(title)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(KeyboardTheme.ink)
+
             Spacer()
+
             Button {
                 session.dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KeyboardTheme.mutedInk)
             }
             .accessibilityLabel("Close")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, 13)
     }
 
     private var title: String {
         switch session.phase {
-        case .idle, .choosing, .unavailable: "Take a moment to reflect"
+        case .idle, .choosing, .unavailable: "What do you need?"
         case .breathing: "Breathe"
-        case .thinking: "Finding the words"
-        case .reviewing: "Rewrite with clarity"
+        case .thinking: "Finding clearer words"
+        case .reviewing: "Choose your rewrite"
         }
     }
-
-    // MARK: Content
 
     @ViewBuilder
     private var content: some View {
@@ -87,97 +89,138 @@ struct ReflectPanel: View {
         }
     }
 
-    // MARK: Chooser
-
-    /// Two actions, both of which do something real.
-    ///
-    /// "Reflect" and "Save for later" were cut rather than kept as stubs:
-    /// Reflect was wired to `breathe()`, so it was Breathe with a different
-    /// icon, and "Save for later" only called `dismiss()` and saved nothing.
-    ///
-    /// No self-report step either: the emotion the user sees is the model's
-    /// reading of what they actually wrote, shown after the rewrite. Asking
-    /// them to label the feeling first was friction that only steered the
-    /// model into echoing the label back.
     private var chooser: some View {
-        // Fixed-width columns rather than `maxWidth: .infinity`: with only two
-        // actions, filling the panel would strand each 46pt circle in the
-        // middle of a half-width column.
-        HStack(spacing: 32) {
-            action("Breathe", icon: "wind", tint: .blue) { session.breathe() }
-            action("Rewrite", icon: "pencil.line", tint: .orange) { session.rewrite() }
+        HStack(spacing: 10) {
+            action(
+                "Breathe",
+                subtitle: "One guided breath",
+                icon: "wind",
+                tint: Color(red: 0.345, green: 0.455, blue: 0.804)
+            ) {
+                session.breathe()
+            }
+
+            action(
+                "Rewrite",
+                subtitle: "Say it clearer",
+                icon: "pencil.line",
+                tint: Color(red: 0.596, green: 0.408, blue: 0.682),
+                isPrimary: true
+            ) {
+                session.rewrite()
+            }
         }
         .frame(maxWidth: .infinity)
     }
 
     private func action(
         _ label: String,
+        subtitle: String,
         icon: String,
         tint: Color,
+        isPrimary: Bool = false,
         perform: @escaping () -> Void
     ) -> some View {
         Button(action: perform) {
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 18))
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(tint)
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(tint.opacity(0.12)))
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(isPrimary ? .white.opacity(0.44) : KeyboardTheme.iconDisc))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(isPrimary ? KeyboardTheme.onIris : KeyboardTheme.ink)
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(isPrimary ? KeyboardTheme.onIrisMuted : KeyboardTheme.mutedInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
             }
-            .frame(width: 84)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        isPrimary
+                        ? LinearGradient(colors: KeyboardTheme.iris, startPoint: .topLeading, endPoint: .bottomTrailing)
+                        : LinearGradient(colors: [KeyboardTheme.cardFillTop, KeyboardTheme.cardFillBottom], startPoint: .top, endPoint: .bottom)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isPrimary ? .white.opacity(0.62) : KeyboardTheme.border, lineWidth: 0.75)
+            )
         }
         .buttonStyle(.plain)
     }
 }
 
-// MARK: - Breathing
-
-/// A paced breath. Four seconds in, four out — slow enough that following it
-/// actually settles the user, which is the entire point of the feature.
 private struct BreathingView: View {
     let onDone: () -> Void
     @State private var expanded = false
 
     var body: some View {
-        VStack(spacing: 18) {
-            Circle()
-                .fill(.tint.opacity(0.15))
-                .overlay(Circle().stroke(.tint.opacity(0.35), lineWidth: 1))
-                .frame(width: expanded ? 120 : 68, height: expanded ? 120 : 68)
-                .animation(.easeInOut(duration: 4).repeatForever(autoreverses: true), value: expanded)
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(red: 0.765, green: 0.886, blue: 1.000).opacity(0.92),
+                                Color(red: 0.855, green: 0.824, blue: 1.000).opacity(0.66),
+                                Color(red: 1.000, green: 0.824, blue: 0.925).opacity(0.28),
+                                .clear
+                            ],
+                            center: .center,
+                            startRadius: 6,
+                            endRadius: 76
+                        )
+                    )
+                    .blur(radius: 1.5)
+                Circle()
+                    .stroke(.white.opacity(0.70), lineWidth: 1)
+            }
+            .frame(width: expanded ? 122 : 72, height: expanded ? 122 : 72)
+            .animation(.easeInOut(duration: 4).repeatForever(autoreverses: true), value: expanded)
+
             Text(expanded ? "Breathe out" : "Breathe in")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
-            Button("I'm ready", action: onDone)
                 .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(KeyboardTheme.mutedInk)
+                .contentTransition(.opacity)
+
+            Button(action: onDone) {
+                Text("I'm ready")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(KeyboardTheme.onAccent)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(KeyboardTheme.accent))
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .onAppear { expanded = true }
     }
 }
-
-// MARK: - Thinking
 
 private struct ThinkingView: View {
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
-            Text("Reading what you wrote…")
+                .tint(KeyboardTheme.ink)
+            Text("Reading what you wrote...")
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(KeyboardTheme.mutedInk)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 26)
     }
 }
-
-// MARK: - Unavailable
 
 private struct UnavailableView: View {
     let reason: ReflectionUnavailable
@@ -187,13 +230,15 @@ private struct UnavailableView: View {
         VStack(spacing: 8) {
             Text(reason.title)
                 .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(KeyboardTheme.ink)
             Text(reason.message)
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(KeyboardTheme.mutedInk)
                 .multilineTextAlignment(.center)
             if reason.isRetryable {
                 Button("Try again", action: onRetry)
                     .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(KeyboardTheme.ink)
                     .padding(.top, 4)
             }
         }

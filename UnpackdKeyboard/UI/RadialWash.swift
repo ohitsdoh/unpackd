@@ -51,7 +51,20 @@ struct RadialWash: View {
         let diameter = Self.coveringRadius(for: size, from: anchor) * 2 * progress
 
         Circle()
-            .fill(.tint.opacity(0.14))
+            .fill(
+                RadialGradient(
+                    colors: [
+                        .white.opacity(0.34),
+                        Color(red: 0.855, green: 0.824, blue: 1.000).opacity(0.22),
+                        Color(red: 0.765, green: 0.886, blue: 1.000).opacity(0.16),
+                        Color(red: 1.000, green: 0.824, blue: 0.925).opacity(0.10),
+                        .clear
+                    ],
+                    center: .center,
+                    startRadius: 2,
+                    endRadius: max(diameter / 2, 2)
+                )
+            )
             .frame(width: diameter, height: diameter)
             .position(anchor)
             // A soft edge keeps the growing circle from reading as a

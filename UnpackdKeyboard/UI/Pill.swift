@@ -24,6 +24,7 @@ struct Pill: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(Capsule().fill(tint.opacity(0.12)))
+            .background(Capsule().fill(tint.opacity(0.11)))
+            .overlay(Capsule().stroke(tint.opacity(0.16), lineWidth: 0.5))
     }
 }

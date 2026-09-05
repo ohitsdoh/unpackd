@@ -3,6 +3,7 @@
 //  UnpackdKeyboard
 //
 
+import KeyboardKit
 import SwiftUI
 
 /// Composes the reflect panel above the keyboard and reports the total height
@@ -39,6 +40,17 @@ struct KeyboardRootView<KeyboardView: View>: View {
                 }
 
                 keyboardView()
+                    .keyboardViewStyle(
+                        KeyboardViewStyle(
+                            background: .color(KeyboardTheme.keyboardBackground),
+                            backgroundCornerRadiusTop: 0,
+                            backgroundCornerRadiusBottom: 0,
+                            foregroundColor: KeyboardTheme.ink,
+                            edgeInsets: .init(top: 8, leading: 5, bottom: 4, trailing: 5)
+                        )
+                    )
+                    .keyboardButtonStyle(builder: KeyboardTheme.style)
+                    .background(KeyboardTheme.keyboardBackground)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height }
                         action: { keyboardHeight = $0 }
             }

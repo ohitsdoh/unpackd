@@ -53,15 +53,20 @@ class KeyboardViewController: KeyboardInputViewController {
         // consulted. It lives in TextCheckerAutocompleteService instead, which
         // is the code path this target actually owns.
 
-        // Haptics default to OFF in KeyboardKit, so granting Full Access alone
-        // would still produce no vibration on the hold-space capture. Both
-        // switches are needed: this one, and the user's Full Access grant.
+        // Haptics default to OFF in KeyboardKit. If the system allows feedback
+        // for this extension context, the hold gesture should feel distinct
+        // from normal typing; the visual state carries it when haptics are
+        // unavailable.
         state.feedbackContext.settings.isHapticFeedbackEnabled = true
 
         let handler = HoldSpaceActionHandler(controller: self)
         handler.onTrigger = { [weak self] in
             guard let self else { return }
             Task { @MainActor in self.beginReflection() }
+        }
+        handler.onPracticeTrigger = { [weak self] practice in
+            guard let self else { return }
+            Task { @MainActor in self.beginPractice(practice) }
         }
         services.actionHandler = handler
 
@@ -108,10 +113,25 @@ class KeyboardViewController: KeyboardInputViewController {
     /// slow and jumpy, and not worth it for this feature.)
     @MainActor
     private func beginReflection() {
+        session.begin(draft: currentDraft())
+    }
+
+    @MainActor
+    private func beginPractice(_ practice: KeyboardPracticeAction) {
+        switch practice {
+        case .breathe:
+            session.beginBreathe()
+        case .rewrite:
+            session.beginRewrite(draft: currentDraft())
+        }
+    }
+
+    @MainActor
+    private func currentDraft() -> String {
         let proxy = textDocumentProxy
         let before = proxy.documentContextBeforeInput ?? ""
         let after = proxy.documentContextAfterInput ?? ""
-        session.begin(draft: (before + after).trimmingCharacters(in: .whitespacesAndNewlines))
+        return (before + after).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Replace the user's draft with the chosen rewrite.
