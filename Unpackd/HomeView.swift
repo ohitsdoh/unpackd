@@ -48,12 +48,12 @@ private struct OnboardingView: View {
 
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Communication\nIntelligence.")
-                                .font(.system(size: 38, weight: .regular, design: .serif))
+                                .font(Typography.display(38, .regular))
                                 .lineSpacing(2)
                                 .foregroundStyle(UnpackdStyle.ink)
 
                             Text("For the moment before you send.")
-                                .font(.system(size: 17, weight: .regular))
+                                .font(Typography.inter(17, .regular))
                                 .foregroundStyle(UnpackdStyle.muted)
                         }
                     }
@@ -63,9 +63,9 @@ private struct OnboardingView: View {
                         VStack(alignment: .leading, spacing: 18) {
                             SectionEyebrow("How it works")
                             Text("Hold space to create space.")
-                                .font(.system(size: 25, weight: .regular, design: .serif))
+                                .font(Typography.display(25, .regular))
                             Text("Unpackd lives inside your keyboard. It gives you a pause, a breath, or a clearer draft without sending your words to a server.")
-                                .font(.system(size: 15))
+                                .font(Typography.inter(15))
                                 .foregroundStyle(UnpackdStyle.muted)
                                 .lineSpacing(4)
                         }
@@ -81,7 +81,7 @@ private struct OnboardingView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             SectionEyebrow("Try it")
                             Text("Press and hold the spacebar.")
-                                .font(.system(size: 20, weight: .semibold))
+                                .font(Typography.inter(20, .semibold))
                             KeyboardPreview(isHoldingSpace: isHoldingSpace)
                                 .contentShape(Rectangle())
                                 .onLongPressGesture(minimumDuration: 0.35) {
@@ -95,7 +95,7 @@ private struct OnboardingView: View {
                                 }
                             if isHoldingSpace {
                                 Text("This is the same gesture that opens the panel in Messages, Mail, and other text fields.")
-                                    .font(.system(size: 13))
+                                    .font(Typography.inter(13))
                                     .foregroundStyle(UnpackdStyle.muted)
                                     .transition(.opacity)
                             }
@@ -110,7 +110,7 @@ private struct OnboardingView: View {
                         }
                     } label: {
                         Text(keyboardSetupAcknowledged ? "Enter Unpackd" : "Set Up Keyboard First")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(Typography.inter(16, .semibold))
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
                     }
@@ -167,10 +167,10 @@ private struct InsightsView: View {
 
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Your week, unpackd.")
-                            .font(.system(size: 30, weight: .regular, design: .serif))
+                            .font(Typography.display(30, .regular))
                             .foregroundStyle(.white)
                         Text("Once you use the keyboard, weekly patterns will appear here.")
-                            .font(.system(size: 16))
+                            .font(Typography.inter(16))
                             .foregroundStyle(.white.opacity(0.62))
                             .lineSpacing(3)
                     }
@@ -195,9 +195,9 @@ private struct InsightsView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionEyebrow("Unpackd moments")
                             Text("No moments yet.")
-                                .font(.system(size: 19, weight: .semibold))
+                                .font(Typography.inter(19, .semibold))
                             Text("The current build does not store message history. That keeps the first version honest while the keyboard experience is being validated.")
-                                .font(.system(size: 14))
+                                .font(Typography.inter(14))
                                 .foregroundStyle(UnpackdStyle.muted)
                                 .lineSpacing(3)
                         }
@@ -300,7 +300,7 @@ private struct YouView: View {
                     Button("Show onboarding again") {
                         hasCompletedOnboarding = false
                     }
-                    .font(.system(size: 15, weight: .medium))
+                    .font(Typography.inter(15, .medium))
                     .foregroundStyle(UnpackdStyle.muted)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 4)
@@ -327,10 +327,10 @@ private struct PageHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 38, weight: .regular, design: .serif))
+                .font(Typography.display(38, .regular))
                 .foregroundStyle(UnpackdStyle.ink)
             Text(subtitle)
-                .font(.system(size: 16))
+                .font(Typography.inter(16))
                 .foregroundStyle(UnpackdStyle.muted)
         }
     }
@@ -346,22 +346,22 @@ private struct SetupInstructions: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "keyboard")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(Typography.inter(18, .medium))
                         .foregroundStyle(UnpackdStyle.ink)
                         .frame(width: 38, height: 38)
                         .background(Circle().fill(Color.black.opacity(0.05)))
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Keyboard setup")
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(Typography.inter(18, .semibold))
                         Text(isAcknowledged ? "Marked as added on this device." : "Add Unpackd and enable Full Access before using the hold-space panel.")
-                            .font(.system(size: 14))
+                            .font(Typography.inter(14))
                             .foregroundStyle(UnpackdStyle.muted)
                     }
 
                     Spacer(minLength: 8)
                     Text(isAcknowledged ? "Added" : "Setup")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(Typography.inter(12, .semibold))
                         .foregroundStyle(isAcknowledged ? Color(red: 0.275, green: 0.557, blue: 0.333) : UnpackdStyle.muted)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -388,7 +388,7 @@ private struct SetupInstructions: View {
                         .buttonStyle(.bordered)
                         .buttonBorderShape(.capsule)
                 }
-                .font(.system(size: 15, weight: .semibold))
+                .font(Typography.inter(15, .semibold))
             }
         }
     }
@@ -401,10 +401,10 @@ private struct InsightMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(value)
-                .font(.system(size: 28, weight: .regular, design: .serif))
+                .font(Typography.display(28, .regular))
                 .foregroundStyle(UnpackdStyle.ink)
             Text(label)
-                .font(.system(size: 13))
+                .font(Typography.inter(13))
                 .foregroundStyle(UnpackdStyle.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -437,13 +437,13 @@ private struct PracticeRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(practice.title)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(Typography.inter(17, .semibold))
                     Text(practice.description)
-                        .font(.system(size: 14))
+                        .font(Typography.inter(14))
                         .foregroundStyle(UnpackdStyle.muted)
                         .lineLimit(2)
                     Text(practice.detail)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(Typography.inter(12, .medium))
                         .foregroundStyle(accent.tint)
                 }
 
@@ -470,14 +470,14 @@ private struct RoadmapRow: View {
             KeyBadge(key: key, accent: UnpackdStyle.accent(for: key), isActive: false)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(Typography.inter(15, .semibold))
                 Text(detail)
-                    .font(.system(size: 13))
+                    .font(Typography.inter(13))
                     .foregroundStyle(UnpackdStyle.muted)
             }
             Spacer()
             Text("Later")
-                .font(.system(size: 12, weight: .medium))
+                .font(Typography.inter(12, .medium))
                 .foregroundStyle(UnpackdStyle.muted)
         }
     }
@@ -490,7 +490,7 @@ private struct KeyBadge: View {
 
     var body: some View {
         Text(key)
-            .font(.system(size: 20, weight: .semibold))
+            .font(Typography.inter(20, .semibold))
             .foregroundStyle(isActive ? accent.tint : accent.tint.opacity(0.48))
             .frame(width: 44, height: 44)
             .background(
@@ -513,14 +513,14 @@ private struct SettingsLine: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 17, weight: .medium))
+                .font(Typography.inter(17, .medium))
                 .foregroundStyle(UnpackdStyle.ink)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(Typography.inter(15, .semibold))
                 Text(detail)
-                    .font(.system(size: 13))
+                    .font(Typography.inter(13))
                     .foregroundStyle(UnpackdStyle.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }

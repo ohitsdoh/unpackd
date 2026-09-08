@@ -4,32 +4,20 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>Unpackd</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
-	<!-- Must match the container app exactly, or installation fails. -->
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- Same ITMS-90683 requirement as the container app: KeyboardKit
-	     references the microphone API for dictation. Apple flagged only
-	     Unpackd.app, but this target links the same framework, so the key
-	     goes here too rather than risking a second rejection. Nothing in
-	     this extension records audio. -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Unpackd does not use the microphone. Dictation is provided by the system keyboard, not by Unpackd.</string>
 	<key>NSExtension</key>
 	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.keyboard-service</string>
-		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
 		<key>NSExtensionAttributes</key>
 		<dict>
 			<key>IsASCIICapable</key>
@@ -38,31 +26,23 @@
 			<false/>
 			<key>PrimaryLanguage</key>
 			<string>en-US</string>
-			<!-- Full Access is requested for HAPTICS, not for network.
-			     UIFeedbackGenerator is inert in a keyboard extension until the
-			     user grants Full Access, and the hold-space capture needs to be
-			     felt: a held spacebar that does nothing for 300ms reads as a
-			     dropped key. It also unlocks the shared container, so learned
-			     autocorrect words and settings can persist between app and
-			     keyboard (see appGroupId in KeyboardApp.unpackd).
-
-			     THIS DOES NOT MEAN WE GO ONLINE. The rewrite stays fully
-			     on-device via Foundation Models, and there is no URLSession
-			     anywhere in this target. Adding a network call later is a
-			     product decision, not a technical one that this key settles.
-			     Apple's rule for open-access keyboards: "Do not store received
-			     keystroke or voice data except to provide services that are
-			     obvious to the user."
-
-			     THE COST IS REAL: iOS shows "Full Access ... allows the
-			     developer to transmit anything you type" on install. For a
-			     keyboard that reads what you type at your worst moments, that
-			     prompt is the single biggest install-time drop-off. If device
-			     testing says the haptic is not worth it, set this back to
-			     false — nothing else in the codebase depends on it. -->
 			<key>RequestsOpenAccess</key>
 			<true/>
 		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.keyboard-service</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Unpackd does not use the microphone. Dictation is provided by the system keyboard, not by Unpackd.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter_18pt-Light.ttf</string>
+		<string>Inter_18pt-Regular.ttf</string>
+		<string>Inter_18pt-Medium.ttf</string>
+		<string>Inter_18pt-SemiBold.ttf</string>
+		<string>Inter_18pt-Bold.ttf</string>
+	</array>
 </dict>
 </plist>

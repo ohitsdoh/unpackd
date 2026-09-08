@@ -7,6 +7,7 @@
 
 import Foundation
 import KeyboardKit
+import QuartzCore
 
 enum KeyboardPracticeAction {
     case breathe
@@ -54,54 +55,84 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
         }
     }
 
-    /// The rest of the gesture sequence that `trigger` starts, and which must
-    /// be swallowed rather than handled normally.
+    /// Which gesture/key begins the *ramp* that `trigger` eventually completes.
     ///
-    /// WHY THIS IS NEEDED
-    /// `longPress` and `release` are separate gestures, and KeyboardKit sends
-    /// *both* for one physical press-and-hold. Swallowing only `longPress`
-    /// therefore still let the `release` through, and `.space`'s standard
-    /// release action inserts a space — so opening the panel typed a space
-    /// into the user's draft every time.
-    ///
-    /// WHY IT IS DATA, LIKE `trigger`
-    /// A trigger and its tail are one fact about a gesture, so they are stated
-    /// the same way. Hard-coding `.release` here would quietly break the
-    /// promise `trigger` makes: rebinding the feature to a different gesture
-    /// would also need this method's body edited, which is exactly the
-    /// relearning `trigger` exists to avoid. `.end` is included because it is
-    /// in the `Gesture` enum, but `.release` is the one observed for the
-    /// spacebar — matching either means the latch cannot stick open and
-    /// swallow a subsequent real space.
-    var triggerTail: (Keyboard.Gesture) -> Bool = { gesture in
-        gesture == .release || gesture == .end
+    /// WHY A SECOND PREDICATE
+    /// KeyboardKit only tells us about discrete gestures — there is no
+    /// "still holding, 300ms in" callback. But stages 03 and 04 of the design
+    /// need continuous feedback while the finger is down and before anything
+    /// has been committed to, so the ramp is timed locally: `.press` starts a
+    /// display link, `.release` cancels it. Kept as data for the same reason
+    /// as `trigger` — rebinding the feature moves both together.
+    var rampTrigger: (Keyboard.Gesture, KeyboardAction) -> Bool = { gesture, action in
+        gesture == .press && action == .space
     }
 
     /// Called when the trigger fires.
     var onTrigger: (() -> Void)?
     var onPracticeTrigger: ((KeyboardPracticeAction) -> Void)?
 
-    /// Set when `trigger` fires, cleared by the first matching `triggerTail`.
+    /// Called every frame while the finger is down, with 0...1 progress toward
+    /// the open. Returns the stage newly entered, if any, so we can haptic it.
+    var onHoldProgress: ((Double) -> ReflectSession.HoldStage?)?
+
+    /// Called when the finger lifts before the gesture completed.
+    var onHoldCancelled: (() -> Void)?
+
+    /// Set when `trigger` fires, cleared by the release that ends that press.
     private var didTriggerOnCurrentPress = false
+
+    /// Drives the 0...1 ramp between `.press` and the long-press.
+    ///
+    /// A CADisplayLink rather than a Timer: this animates the spacebar every
+    /// frame, and a Timer's default tolerance produces visible stutter in the
+    /// ripple. It is invalidated on release, so it never runs while idle —
+    /// a display link left spinning in a keyboard extension is a battery and
+    /// footprint problem, not just an aesthetic one.
+    private var rampLink: CADisplayLink?
+    private var rampStart: CFTimeInterval = 0
+
+    /// Weak indirection between the run loop and this handler.
+    ///
+    /// `CADisplayLink` retains its target, and an added link is retained by the
+    /// run loop — so `CADisplayLink(target: self, ...)` builds
+    /// `runloop -> link -> handler` and this object cannot deallocate while a
+    /// ramp is live. `deinit` would then be unreachable for precisely the
+    /// window it exists to cover: a teardown mid-hold, when the user swaps
+    /// keyboards or the host dismisses the field with a finger still down.
+    /// A leaked handler drags the controller, services and autocomplete
+    /// service with it, which a 60MB-capped extension cannot afford.
+    private final class RampProxy {
+        weak var owner: HoldSpaceActionHandler?
+
+        @objc func step() {
+            owner?.stepRamp()
+        }
+    }
 
     override func handle(
         _ gesture: Keyboard.Gesture,
         on action: KeyboardAction,
         replaced: Bool
     ) {
+        if rampTrigger(gesture, action) {
+            startRamp()
+            // Deliberately falls through to `super`: `.press` still needs its
+            // standard handling (press feedback, state bookkeeping). We are
+            // only observing it, not claiming it.
+        }
+
         if trigger(gesture, action) {
             didTriggerOnCurrentPress = true
+            // The ramp has arrived; hand the visuals a clean 1.0 rather than
+            // whatever fraction the last frame happened to land on, so the
+            // spacebar is at full iridescence in the frame the panel opens.
+            stopRamp(completing: true)
 
-            // The capture gets its own heavier haptic rather than the standard
-            // key feedback. This is the "hold to act" moment — it has to feel
-            // categorically different from typing a space, or the gesture
-            // reads as a key that stuck. Held space that does nothing for
-            // 300ms otherwise reads as a dropped key.
-            //
-            // The visual glow carries the moment if haptics are unavailable in
-            // the current extension context, so the capture is never entirely
-            // unannounced.
-            triggerHapticFeedback(.mediumImpact)
+            // No haptic here: the ramp's `.activate` stage already fired the
+            // medium impact at the moment the gesture was confirmed, which is
+            // a frame or two earlier and matches the design's "04 ACTIVATE"
+            // beat. Firing again here reads as a stutter.
             onTrigger?()
             return  // Deliberately no `super` — this swallows cursor drag
                     // (tryUpdateSpaceDragState) and the locale menu.
@@ -114,19 +145,67 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
             return
         }
 
-        // Swallow the tail of the gesture that opened the panel — the release
-        // is the one that would insert the space.
+        // The end of a press, whichever way it went.
         //
-        // Whichever of these arrives first clears the latch. `.end` exists in
-        // the Gesture enum but its rawValue is absent from the shipped
-        // binary's strings, so it may never be emitted for the spacebar;
-        // `.release` is the one we know arrives. Clearing on either means the
-        // latch cannot stick open and swallow a subsequent real space.
-        if didTriggerOnCurrentPress, gesture == .release || gesture == .end {
-            didTriggerOnCurrentPress = false
-            return
+        // `.end` exists in the Gesture enum but its rawValue is absent from the
+        // shipped binary's strings, so it may never be emitted for the
+        // spacebar; `.release` is the one we know arrives. Matching either
+        // means the latch cannot stick open and swallow a subsequent real
+        // space.
+        if gesture == .release || gesture == .end {
+            if didTriggerOnCurrentPress {
+                // Swallow the tail of the gesture that opened the panel — this
+                // release is the one that would otherwise insert a space.
+                didTriggerOnCurrentPress = false
+                return
+            }
+            // A release that did NOT follow a completed trigger is an abandoned
+            // hold: pressed, held partway, let go. The ramp has to be wound
+            // back or the spacebar stays part-lit forever. Before `super`, so
+            // the visual reset lands in the same frame as the inserted space.
+            stopRamp(completing: false)
         }
 
         super.handle(gesture, on: action, replaced: replaced)
+    }
+
+    // MARK: - Hold ramp
+
+    private func startRamp() {
+        stopRamp(completing: false)
+        rampStart = CACurrentMediaTime()
+        let proxy = RampProxy()
+        proxy.owner = self
+        let link = CADisplayLink(target: proxy, selector: #selector(RampProxy.step))
+        // .common so the ramp keeps running during the scroll/tracking run
+        // loop mode a host app may push while the finger is down.
+        link.add(to: .main, forMode: .common)
+        rampLink = link
+    }
+
+    fileprivate func stepRamp() {
+        let elapsed = CACurrentMediaTime() - rampStart
+        let progress = elapsed / HoldTiming.holdDuration
+        guard let stage = onHoldProgress?(progress) else { return }
+
+        // One haptic per stage, weighted to match the design: 03 is "keep
+        // holding" (light), 04 is "space created" (a firmer, more resolved
+        // acknowledgement). The `.mediumImpact` that used to fire on trigger
+        // is now this `.activate` beat — firing both would double-tap.
+        switch stage {
+        case .threshold: triggerHapticFeedback(.lightImpact)
+        case .activate: triggerHapticFeedback(.mediumImpact)
+        case .none: break
+        }
+    }
+
+    private func stopRamp(completing: Bool) {
+        rampLink?.invalidate()
+        rampLink = nil
+        if !completing { onHoldCancelled?() }
+    }
+
+    deinit {
+        rampLink?.invalidate()
     }
 }

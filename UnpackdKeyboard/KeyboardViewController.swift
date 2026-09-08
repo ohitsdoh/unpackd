@@ -4,6 +4,7 @@
 //
 
 import KeyboardKit
+import QuartzCore
 import SwiftUI
 import UIKit
 
@@ -15,6 +16,10 @@ class KeyboardViewController: KeyboardInputViewController {
 
     private var session: ReflectSession!
     private var heightConstraint: NSLayoutConstraint?
+
+    /// Decides when the spacebar should quietly come to life.
+    private let heatDetector = HeatDetector()
+
 
     // MARK: - Lifecycle
 
@@ -53,11 +58,35 @@ class KeyboardViewController: KeyboardInputViewController {
         // consulted. It lives in TextCheckerAutocompleteService instead, which
         // is the code path this target actually owns.
 
-        // Haptics default to OFF in KeyboardKit. If the system allows feedback
-        // for this extension context, the hold gesture should feel distinct
-        // from normal typing; the visual state carries it when haptics are
-        // unavailable.
+        // Haptics default to OFF in KeyboardKit, and this flag is what makes
+        // the feedback engine available at all.
+        //
+        // Enabling it does NOT mean every key buzzes. The per-gesture haptics
+        // are a separate, declarative layer, and every gesture is set to
+        // `.none` below — so ordinary typing feels exactly like the native
+        // keyboard, which is silent to the touch unless the user opts in.
+        //
+        // Stating it as configuration rather than by overriding
+        // `shouldTriggerHapticFeedback` matters: the policy lives in one place
+        // next to the flag it qualifies, instead of being split across two
+        // files where reading either alone is misleading. It also leaves
+        // KeyboardKit's own pipeline usable — a future per-key haptic is
+        // `registerCustomHapticFeedback(_:for:on:)`, not another bypass.
+        //
+        // Unpackd's own moments are not gestures: the hold's two beats come
+        // from a display-link tick and the quiet nudge from a debounced text
+        // change. They call `triggerHapticFeedback` directly because there is
+        // no gesture for them to hang off. The visual state carries them when
+        // haptics are unavailable in this extension context, so nothing is
+        // announced by touch alone.
         state.feedbackContext.settings.isHapticFeedbackEnabled = true
+        state.feedbackContext.hapticConfiguration = .init(
+            press: .none,
+            release: .none,
+            doubleTap: .none,
+            longPress: .none,
+            repeat: .none
+        )
 
         let handler = HoldSpaceActionHandler(controller: self)
         handler.onTrigger = { [weak self] in
@@ -68,11 +97,38 @@ class KeyboardViewController: KeyboardInputViewController {
             guard let self else { return }
             Task { @MainActor in self.beginPractice(practice) }
         }
+        // Called from the display link, which runs on the main thread, so the
+        // MainActor state is touched synchronously rather than hopped onto —
+        // a Task per frame would both arrive late and allocate 60 times a
+        // second inside a footprint-constrained extension.
+        handler.onHoldProgress = { [weak self] progress in
+            guard let self else { return nil }
+            return MainActor.assumeIsolated {
+                self.session.updateHold(progress: progress)
+            }
+        }
+        handler.onHoldCancelled = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.session.cancelHold()
+            }
+        }
         services.actionHandler = handler
+
+        #if DEBUG
+        // Says whether Inter actually registered. `Font.custom` falls back to
+        // San Francisco silently, so without this the only symptom is "the
+        // wordmark looks a bit off" — which is not a symptom anyone can act on.
+        Typography.audit()
+        #endif
 
         // Pay the 1-2s model cold start now, at keyboard launch, rather than
         // when the user is holding space waiting for the panel to appear.
         engine.prewarm()
+
+        // Same reasoning, much cheaper: ~58ms to load the emotion classifier,
+        // paid here instead of on the user's first keystroke.
+        heatDetector.prewarm()
 
         super.viewDidLoad()
     }
@@ -80,20 +136,50 @@ class KeyboardViewController: KeyboardInputViewController {
     override func viewWillSetupKeyboardView() {
         setupKeyboardView { [weak self] controller in
             guard let self else { return AnyView(EmptyView()) }
+            // Bound before the view builders below so `buttonContent` captures
+            // the session and not `self`. That closure is escaping and
+            // KeyboardKit retains it for the life of the view tree, so a
+            // captured controller would pin the whole graph behind it — the
+            // warmed LanguageModelSession and the NLTagger included — across
+            // rebuilds. The other callbacks take `[weak self]` because they
+            // genuinely need the controller (proxy access, height constraint).
+            let session = self.session!
             return AnyView(
                 KeyboardRootView(
-                    session: self.session,
+                    session: session,
                     onHeightChange: { [weak self] height in
                         self?.setKeyboardHeight(height)
                     },
                     onApplyRewrite: { [weak self] text in
                         self?.applyRewrite(text)
                     },
-                    keyboardView: {
+                    keyboardView: { reportKeyFrame, spacebarPhase in
                         // The ~48pt above the keys is the autocomplete toolbar
                         // that `KeyboardView(services:)` builds for us, now fed
                         // by TextCheckerAutocompleteService.
-                        KeyboardView(services: controller.services)
+                        //
+                        // `buttonContent` replaces only the space key's caption
+                        // and hands every other key back the standard view. This
+                        // is the supported seam for it — the alternative was
+                        // overlaying our own label on top of KeyboardKit's,
+                        // which means guessing the spacebar's frame and leaves
+                        // the locale name visible underneath during the fade
+                        // KeyboardKit runs on it.
+                        KeyboardView(
+                            services: controller.services,
+                            buttonContent: { params in
+                                if params.item.action == .space {
+                                    SpacebarWordmark(
+                                        intensity: session.spacebarIntensity,
+                                        phase: spacebarPhase,
+                                        onFrameChange: reportKeyFrame
+                                    )
+                                } else {
+                                    params.view
+                                }
+                            },
+                            buttonView: { $0.view }
+                        )
                     }
                 )
             )
@@ -161,6 +247,92 @@ class KeyboardViewController: KeyboardInputViewController {
         session.dismiss()
     }
 
+    // MARK: - Quiet nudge
+
+    /// Re-evaluate how heated the draft looks.
+    ///
+    /// `textDidChangeAsync`, NOT `textDidChange`.
+    ///
+    /// This is the whole reason detection appeared not to work while typing and
+    /// then suddenly fired when the cursor moved. `textDidChange` runs *before*
+    /// the text document proxy has caught up, so `documentContextBeforeInput`
+    /// still returns the draft as it was BEFORE the keystroke that triggered
+    /// the callback. Detection was therefore always one character stale — and
+    /// since the deciding character is usually the last one typed, the verdict
+    /// only became correct on the next event, which in practice was the user
+    /// tapping elsewhere.
+    ///
+    /// KeyboardKit's `textDidChangeAsync` exists precisely for this: it is
+    /// called after the proxy has settled, so the draft read here is the one
+    /// on screen.
+    ///
+    /// Still not the action handler, for the original reason: the draft also
+    /// changes in ways the handler never sees — autocorrect applying, the user
+    /// tapping to move the cursor, dictation, or a paste.
+    override func textDidChangeAsync(_ textInput: UITextInput?) {
+        super.textDidChangeAsync(textInput)
+        scheduleHeatCheck()
+    }
+
+    /// Also hooked, deliberately.
+    ///
+    /// `textDidChangeAsync` is the one whose draft is trustworthy, but it is
+    /// KeyboardKit's own addition and nothing in the shipped binary proves it
+    /// fires in every host app. This one always fires. Reading a stale draft
+    /// here is harmless — the async call corrects it a moment later, and
+    /// `setPresence` ignores a level it is already at — whereas relying solely
+    /// on a hook that might not fire is how this bug happened in the first
+    /// place. Both cost 4ms.
+    override func textDidChange(_ textInput: UITextInput?) {
+        super.textDidChange(textInput)
+        scheduleHeatCheck()
+    }
+
+    private func scheduleHeatCheck() {
+        // NO DEBOUNCE. The check runs on every text change.
+        //
+        // MEASURED, NOT ASSUMED
+        // Both classifiers together cost 4.4ms warm (58ms once, on the first
+        // call, to load the emotion model). At that price there is nothing to
+        // debounce — a keystroke costs a fraction of a frame, and every scheme
+        // for spreading the cost out only adds latency to a feature whose
+        // entire value is being timely.
+        //
+        // The history here is worth keeping: this began as a 0.45s trailing
+        // debounce, which meant the detector never ran *while* someone was
+        // typing — only after they stopped. Angry messages are typed fast and
+        // without pausing, so the feature was slowest exactly when it mattered.
+        // Replacing it with a leading edge plus a 0.5s throttle helped and was
+        // still solving a problem that does not exist.
+        updatePresence()
+    }
+
+    @MainActor
+    private func updatePresence() {
+        // While the panel is open the spacebar is not the interface any more,
+        // and re-reading a draft that is about to be replaced would raise the
+        // presence again the moment it was reset.
+        guard !session.isOpen else { return }
+
+        let draft = currentDraft()
+        let level = heatDetector.presence(for: draft)
+        #if DEBUG
+        print("[Unpackd] fullAccess=\(hasFullAccess) draft=\"\(draft.prefix(60))\" len=\(draft.count) -> \(level) (was \(session.presence))")
+        #endif
+        if session.setPresence(level) {
+            // Exactly one subtle pulse on arriving at NUDGE — "visual + haptic,
+            // never disruptive". `setPresence` returns true only on the way up,
+            // so cooling back down is silent.
+            //
+            // `triggerHapticFeedback` rather than `triggerFeedback(for:on:)`:
+            // the latter also plays the key *click*, and an unprompted click
+            // from a key nobody touched is precisely the disruption this is
+            // supposed to avoid. `.selectionChanged` is the lightest tick the
+            // enum offers — the nudge should be noticed, not felt.
+            services.actionHandler.triggerHapticFeedback(.selectionChanged)
+        }
+    }
+
     // MARK: - Height
 
     /// Grow the keyboard to fit the panel.
@@ -171,6 +343,9 @@ class KeyboardViewController: KeyboardInputViewController {
     /// sits above the keys and pushes the host app's content up. There is no
     /// hard height cap, but the system dock (globe/mic) stays on top of us.
     private func setKeyboardHeight(_ height: CGFloat) {
+        #if DEBUG
+        print("[Unpackd] height -> \(height)")
+        #endif
         if let constraint = heightConstraint {
             guard constraint.constant != height else { return }
             constraint.constant = height

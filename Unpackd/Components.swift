@@ -50,7 +50,7 @@ struct KeyRow: View {
                 let accent = UnpackdStyle.accent(for: upper)
                 let highlighted = highlightedKeys.contains(upper)
                 Text(key)
-                    .font(.system(size: 15, weight: highlighted ? .semibold : .regular))
+                    .font(Typography.inter(15, highlighted ? .semibold : .regular))
                     .foregroundStyle(highlighted ? accent.tint : .black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
@@ -81,10 +81,10 @@ struct SpecialKey: View {
         Group {
             if let systemName {
                 Image(systemName: systemName)
-                    .font(.system(size: 14))
+                    .font(Typography.inter(14))
             } else {
                 Text(text ?? "")
-                    .font(.system(size: 12))
+                    .font(Typography.inter(12))
             }
         }
         .foregroundStyle(.black)
@@ -101,13 +101,13 @@ struct ChecklistRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("\(number)")
-                .font(.system(size: 12, weight: .bold))
+                .font(Typography.inter(12, .bold))
                 .foregroundStyle(.white)
                 .frame(width: 26, height: 26)
                 .background(Circle().fill(Color.primary))
 
             Text(text)
-                .font(.system(size: 15))
+                .font(Typography.inter(15))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }

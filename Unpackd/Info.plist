@@ -4,28 +4,28 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>Unpackd</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- Required by App Store Connect (ITMS-90683) even though nothing in
-	     this app records audio. KeyboardKit's binary references
-	     AVAudioSession's requestRecordPermission: for its dictation
-	     support, and Apple demands a purpose string for any referenced
-	     sensitive API whether or not the app calls it. Keep the wording
-	     truthful: we do not use the microphone, so it must not claim we
-	     do. If KeyboardKit's dictation is ever actually enabled, reword
-	     this to describe what it really does. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Unpackd does not use the microphone. Dictation is provided by the system keyboard, not by Unpackd.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter_18pt-Light.ttf</string>
+		<string>Inter_18pt-Regular.ttf</string>
+		<string>Inter_18pt-Medium.ttf</string>
+		<string>Inter_18pt-SemiBold.ttf</string>
+		<string>Inter_18pt-Bold.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

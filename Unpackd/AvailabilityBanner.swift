@@ -15,14 +15,14 @@ struct AvailabilityBanner: View {
         BrandSurface {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(Typography.inter(18, .medium))
                     .foregroundStyle(tint)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(Typography.inter(16, .semibold))
                     Text(message)
-                        .font(.system(size: 14))
+                        .font(Typography.inter(14))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

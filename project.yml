@@ -27,7 +27,26 @@ targets:
   Unpackd:
     type: application
     platform: iOS
-    sources: [Unpackd]
+    sources:
+      - path: Unpackd
+      # Inter, for the app's UI type. Shared with the extension rather than
+      # duplicated into each target's folder: an app extension cannot read
+      # its container app's bundle, so both need their own copy of the files,
+      # but there is no reason for two copies in the repo.
+      #
+      # This MUST be a `sources` entry with an explicit `buildPhase`, not a
+      # top-level `resources:` key — XcodeGen has no such key and silently
+      # ignores it, producing a project with no reference to the fonts at all.
+      # That failure is invisible: the build succeeds, the files are simply
+      # absent from the bundle, and every `Font.custom` falls back to San
+      # Francisco. Verify with `ls Unpackd.app/*.ttf` after building, not by
+      # the build succeeding.
+      #
+      # `optional: true` so a checkout without the .ttf files still builds.
+      - path: Resources/Fonts
+        buildPhase: resources
+        optional: true
+        excludes: ["README.md"]
     dependencies:
       - target: UnpackdKeyboard
         embed: true
@@ -48,7 +67,23 @@ targets:
   UnpackdKeyboard:
     type: app-extension
     platform: iOS
-    sources: [UnpackdKeyboard]
+    sources:
+      - path: UnpackdKeyboard
+      # Typography is compiled into BOTH targets rather than duplicated. The
+      # PostScript face names are the one thing here that fails silently when
+      # the font files change, so a second copy in the extension is a second
+      # place to forget. Compiling the file twice is cheap; the alternative is
+      # a shared framework for one table.
+      - path: Unpackd/Typography.swift
+      # The extension needs its own copy of the FONTS — see the note on the
+      # app target,
+      # including why this is a `sources` entry and not `resources:`. Here it
+      # is only the spacebar wordmark that uses Inter; the panel and keys stay
+      # on the system font deliberately (see SpacebarWordmark).
+      - path: Resources/Fonts
+        buildPhase: resources
+        optional: true
+        excludes: ["README.md"]
     dependencies:
       - package: KeyboardKit
     settings:

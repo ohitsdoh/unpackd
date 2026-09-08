@@ -141,7 +141,7 @@ struct SectionEyebrow: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .semibold))
+            .font(Typography.inter(11, .semibold))
             .tracking(1.6)
             .foregroundStyle(UnpackdStyle.muted)
     }

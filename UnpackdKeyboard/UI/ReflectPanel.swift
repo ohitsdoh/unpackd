@@ -170,9 +170,9 @@ private struct BreathingView: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color(red: 0.765, green: 0.886, blue: 1.000).opacity(0.92),
-                                Color(red: 0.855, green: 0.824, blue: 1.000).opacity(0.66),
-                                Color(red: 1.000, green: 0.824, blue: 0.925).opacity(0.28),
+                                KeyboardTheme.iris[1].opacity(0.92),
+                                KeyboardTheme.iris[0].opacity(0.66),
+                                KeyboardTheme.iris[3].opacity(0.28),
                                 .clear
                             ],
                             center: .center,
