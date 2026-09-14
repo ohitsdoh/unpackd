@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 import Observation
 
 /// Timings for the hold gesture.
@@ -219,7 +220,10 @@ final class ReflectSession {
             phase = .choosing
         }
         #if DEBUG
-        print("[Unpackd] begin -> phase=\(phase) draftLen=\(draft.count)")
+        Unpackd.log.debug("""
+            begin -> phase=\(String(describing: self.phase), privacy: .public) \
+            draftLen=\(draft.count, privacy: .public)
+            """)
         #endif
     }
 

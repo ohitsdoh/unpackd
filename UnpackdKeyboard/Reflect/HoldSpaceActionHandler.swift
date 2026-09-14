@@ -79,6 +79,31 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
     /// Called when the finger lifts before the gesture completed.
     var onHoldCancelled: (() -> Void)?
 
+    /// Called after a gesture that may have changed the document text.
+    ///
+    /// WHY THIS EXISTS — AND WHY IT IS A TRIGGER, NOT A FILTER
+    /// `textDidChange`/`textDidChangeAsync` only fire when the HOST app
+    /// notifies the input system. When this keyboard inserts a character
+    /// through `textDocumentProxy`, the host frequently does not round-trip a
+    /// notification back to us: the keyboard changed the text, so UIKit sees
+    /// no reason to tell the keyboard about it. Measured on device — 39
+    /// characters typed produced ZERO `textDidChange` calls, and the only
+    /// callback in the whole session arrived when the user tapped elsewhere,
+    /// 5.5 seconds later. That is why the nudge appeared to require "clicking
+    /// off": the tap was the only event that ever reached the controller.
+    ///
+    /// An earlier version of this file had the same callback and used it the
+    /// other way round — as evidence that a *received* `textDidChange` was a
+    /// real edit. That solved the wrong half of the problem: the events it
+    /// filtered were the only ones arriving at all. Here it DRIVES the check,
+    /// so typing is what schedules detection and the host's notifications are
+    /// merely a supplement.
+    ///
+    /// Fired on `.release`/`.end` rather than `.press`, because `super.handle`
+    /// is what performs the insert — the proxy has not been updated yet at
+    /// press time.
+    var onTextMayHaveChanged: (() -> Void)?
+
     /// Set when `trigger` fires, cleared by the release that ends that press.
     private var didTriggerOnCurrentPress = false
 
@@ -167,6 +192,41 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
         }
 
         super.handle(gesture, on: action, replaced: replaced)
+
+        // AFTER `super`, which is what actually performs the insert or delete.
+        // Reading the proxy before this point returns the pre-edit text, which
+        // is the staleness that made an earlier attempt classify every
+        // keystroke against the draft as it was one character ago.
+        if gesture == .release || gesture == .end, mutatesText(action) {
+            onTextMayHaveChanged?()
+        }
+    }
+
+    /// Applying an autocomplete suggestion replaces a word, so it changes the
+    /// draft as surely as a keystroke does — and it arrives through a separate
+    /// overload that the gesture path above never sees. Without this, tapping
+    /// a suggestion leaves the heat check running on the pre-correction text.
+    override func handle(_ suggestion: AutocompleteSuggestion) {
+        super.handle(suggestion)
+        onTextMayHaveChanged?()
+    }
+
+    /// Whether performing this action changes the document text.
+    ///
+    /// Cases verified against KeyboardKit's `.swiftinterface` rather than
+    /// written from memory. The distinction that matters: `moveCursorBackward`
+    /// / `moveCursorForward` are real actions that change the cursor while
+    /// editing nothing, so they are excluded — a caret move must not schedule
+    /// a heat check. Everything not listed (shift, keyboardType, nextKeyboard,
+    /// settings, dictation, …) leaves the text alone.
+    private func mutatesText(_ action: KeyboardAction) -> Bool {
+        switch action {
+        case .character, .characterMargin, .diacritic, .emoji,
+             .space, .backspace, .primary, .pasteFromClipboard:
+            true
+        default:
+            false
+        }
     }
 
     // MARK: - Hold ramp

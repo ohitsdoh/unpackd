@@ -4,6 +4,7 @@
 //
 
 import KeyboardKit
+import os
 import QuartzCore
 import SwiftUI
 import UIKit
@@ -20,23 +21,32 @@ class KeyboardViewController: KeyboardInputViewController {
     /// Decides when the spacebar should quietly come to life.
     private let heatDetector = HeatDetector()
 
-    /// The draft the detector last ran on, so it does not run again on an
-    /// event that did not change the text.
+    /// Hash of the draft behind the most recent presence *rise*.
     ///
-    /// WHY THIS EXISTS
-    /// `textDidChange` is called for far more than typing: moving the cursor,
-    /// changing the selection, and gaining or losing focus all fire it. The
-    /// draft string is identical across every one of those — `currentDraft()`
-    /// is `before + after`, and a cursor tap only moves the boundary between
-    /// them — but without this the classifier still re-ran and `setPresence`
-    /// still saw a change, because presence had been reset to `.rest` in the
-    /// meantime. The visible symptom was the nudge firing when the user
-    /// tapped somewhere in the field rather than when they typed.
+    /// WHY A HASH RATHER THAN EDIT DETECTION
+    /// The question this feature actually has to answer is "is this heated
+    /// text I have not already nudged about". Three earlier attempts answered
+    /// a harder proxy question instead — "was this event an edit or a cursor
+    /// move" — and could not, because a keyboard extension is not told:
+    /// `textDidChange` fires for caret moves, selection changes and focus as
+    /// well as edits, and inferring the difference from the action handler
+    /// misses autocorrect, paste and dictation while depending on a UIKit
+    /// delivery order that is unspecified and varies by host app. That
+    /// ordering is what produced the nudge-on-tapping-away bug: a real
+    /// keystroke whose `selectionDidChange` landed first would suppress
+    /// itself and spend the field's one arrival check.
     ///
-    /// `nil` rather than `""` so the first check after launch always runs;
-    /// an empty field is a legitimate draft value, not "not yet read".
-    private var lastCheckedDraft: String?
-
+    /// The earlier note here claimed comparing the draft could not work
+    /// because both halves of `currentDraft()` are cursor-relative windows.
+    /// That is true of each half and false of their concatenation: moving the
+    /// caret re-partitions the same characters between `before` and `after`,
+    /// so `before + after` is stable under caret movement and changes only
+    /// when the text does. That is the whole signal, and it needs no event
+    /// classification at all.
+    ///
+    /// Nil means nothing has been nudged for this field yet, so the first
+    /// heated draft seen on arrival still earns its one nudge.
+    private var lastNudgedTextHash: Int?
 
     // MARK: - Lifecycle
 
@@ -130,6 +140,16 @@ class KeyboardViewController: KeyboardInputViewController {
                 self.session.cancelHold()
             }
         }
+        // The primary driver of heat detection — see the comment on
+        // `onTextMayHaveChanged`. The host's `textDidChange` callbacks do not
+        // reliably arrive for text this keyboard itself inserted, so typing is
+        // what schedules the check and those hooks only supplement it.
+        handler.onTextMayHaveChanged = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.updatePresence()
+            }
+        }
         services.actionHandler = handler
 
         #if DEBUG
@@ -148,6 +168,17 @@ class KeyboardViewController: KeyboardInputViewController {
         heatDetector.prewarm()
 
         super.viewDidLoad()
+    }
+
+    /// The keyboard has been attached to a text field — possibly a different
+    /// one from last time, in another app.
+    ///
+    /// Re-arms the one allowed arrival check. Without this, `first look` would
+    /// be spent on the first field the keyboard ever saw and every later field
+    /// would be silent until the user typed into it.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        lastNudgedTextHash = nil
     }
 
     override func viewWillSetupKeyboardView() {
@@ -216,25 +247,26 @@ class KeyboardViewController: KeyboardInputViewController {
     /// slow and jumpy, and not worth it for this feature.)
     @MainActor
     private func beginReflection() {
-        session.begin(draft: currentDraft())
-        // `begin` drops presence back to `.rest` while the draft text is
-        // unchanged. The cache would then treat the next check as a no-op and
-        // the key could never nudge again for this message, so the dedupe is
-        // invalidated wherever presence is reset behind its back.
-        lastCheckedDraft = nil
+        let draft = currentDraft()
+        session.begin(draft: draft)
+        // `begin` drops presence back to `.rest`. Sealing the draft that opened
+        // the panel means closing it without changing the text does not
+        // immediately re-nudge about the same message.
+        lastNudgedTextHash = draft.hashValue
     }
 
     @MainActor
     private func beginPractice(_ practice: KeyboardPracticeAction) {
+        let draft = currentDraft()
         switch practice {
         case .breathe:
             session.beginBreathe()
         case .rewrite:
-            session.beginRewrite(draft: currentDraft())
+            session.beginRewrite(draft: draft)
         }
         // `beginBreathe` and `beginRewrite` both reset presence; see
-        // `beginReflection` for why the cache has to be dropped with it.
-        lastCheckedDraft = nil
+        // `beginReflection` for why the draft is sealed with it.
+        lastNudgedTextHash = draft.hashValue
     }
 
     @MainActor
@@ -278,25 +310,23 @@ class KeyboardViewController: KeyboardInputViewController {
     ///
     /// `textDidChangeAsync`, NOT `textDidChange`.
     ///
-    /// This is the whole reason detection appeared not to work while typing and
-    /// then suddenly fired when the cursor moved. `textDidChange` runs *before*
-    /// the text document proxy has caught up, so `documentContextBeforeInput`
-    /// still returns the draft as it was BEFORE the keystroke that triggered
-    /// the callback. Detection was therefore always one character stale — and
-    /// since the deciding character is usually the last one typed, the verdict
-    /// only became correct on the next event, which in practice was the user
-    /// tapping elsewhere.
+    /// `textDidChange` runs *before* the text document proxy has caught up, so
+    /// `documentContextBeforeInput` still returns the draft as it was BEFORE
+    /// the keystroke that triggered the callback. Detection was therefore
+    /// always one character stale — and since the deciding character is
+    /// usually the last one typed, the verdict only became correct on the next
+    /// event, which in practice was the user tapping elsewhere.
     ///
     /// KeyboardKit's `textDidChangeAsync` exists precisely for this: it is
     /// called after the proxy has settled, so the draft read here is the one
     /// on screen.
     ///
-    /// Still not the action handler, for the original reason: the draft also
-    /// changes in ways the handler never sees — autocorrect applying, the user
-    /// tapping to move the cursor, dictation, or a paste.
+    /// There is no `selectionDidChange` override any more, and there must not
+    /// be one: a caret move leaves `currentDraft()` byte-identical, so the
+    /// hash check below absorbs it without needing to be told it happened.
     override func textDidChangeAsync(_ textInput: UITextInput?) {
         super.textDidChangeAsync(textInput)
-        scheduleHeatCheck()
+        updatePresence()
     }
 
     /// Also hooked, deliberately.
@@ -304,39 +334,28 @@ class KeyboardViewController: KeyboardInputViewController {
     /// `textDidChangeAsync` is the one whose draft is trustworthy, but it is
     /// KeyboardKit's own addition and nothing in the shipped binary proves it
     /// fires in every host app. This one always fires. Reading a stale draft
-    /// here is harmless — the async call corrects it a moment later — whereas
-    /// relying solely on a hook that might not fire is how this bug happened
-    /// in the first place. Both cost 4ms.
-    ///
-    /// NOTE: this hook also fires on events that change no text at all —
-    /// cursor moves, selection changes, focus. `updatePresence` dedupes on the
-    /// draft string to absorb those; an earlier comment here claimed
-    /// `setPresence` was enough, which was wrong, because presence has usually
-    /// been reset to `.rest` by then and every such event looked like a rise.
+    /// here is harmless now that the hash gates the nudge: the stale read
+    /// either matches the last-nudged hash and does nothing, or classifies
+    /// text that genuinely differs and the async pass re-checks a moment
+    /// later against what is actually on screen. Both cost ~4ms.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        scheduleHeatCheck()
-    }
-
-    private func scheduleHeatCheck() {
-        // NO DEBOUNCE. The check runs on every text change.
-        //
-        // MEASURED, NOT ASSUMED
-        // Both classifiers together cost 4.4ms warm (58ms once, on the first
-        // call, to load the emotion model). At that price there is nothing to
-        // debounce — a keystroke costs a fraction of a frame, and every scheme
-        // for spreading the cost out only adds latency to a feature whose
-        // entire value is being timely.
-        //
-        // The history here is worth keeping: this began as a 0.45s trailing
-        // debounce, which meant the detector never ran *while* someone was
-        // typing — only after they stopped. Angry messages are typed fast and
-        // without pausing, so the feature was slowest exactly when it mattered.
-        // Replacing it with a leading edge plus a 0.5s throttle helped and was
-        // still solving a problem that does not exist.
         updatePresence()
     }
 
+    /// NO DEBOUNCE. The check runs on every text change.
+    ///
+    /// MEASURED, NOT ASSUMED
+    /// Both classifiers together cost 4.4ms warm (58ms once, on the first
+    /// call, to load the emotion model). At that price there is nothing to
+    /// debounce — a keystroke costs a fraction of a frame, and every scheme
+    /// for spreading the cost out only adds latency to a feature whose entire
+    /// value is being timely.
+    ///
+    /// The history is worth keeping: this began as a 0.45s trailing debounce,
+    /// which meant the detector never ran *while* someone was typing — only
+    /// after they stopped. Angry messages are typed fast and without pausing,
+    /// so the feature was slowest exactly when it mattered.
     @MainActor
     private func updatePresence() {
         // While the panel is open the spacebar is not the interface any more,
@@ -346,23 +365,33 @@ class KeyboardViewController: KeyboardInputViewController {
 
         let draft = currentDraft()
 
-        // Nothing the user wrote has changed, so the verdict cannot have
-        // changed either — this is a cursor move, a selection change or a
-        // focus event. Skipping here is what keeps the nudge tied to typing
-        // rather than to tapping around the field. It also means the two
-        // hooks below can both call in freely: whichever arrives second is
-        // a no-op instead of a second classifier run.
-        guard draft != lastCheckedDraft else { return }
-        lastCheckedDraft = draft
+        // The one gate. A caret move, a selection change or a focus event
+        // leaves this string identical — `before + after` re-partitions the
+        // same characters — so all three land here and stop, with no need to
+        // have identified what kind of event they were.
+        //
+        // It also means one heated draft nudges once: the hash is sealed on
+        // the rise below, and only further typing can clear it.
+        let hash = draft.hashValue
+        guard hash != lastNudgedTextHash else { return }
 
         let level = heatDetector.presence(for: draft)
-        #if DEBUG
-        print("[Unpackd] fullAccess=\(hasFullAccess) draft=\"\(draft.prefix(60))\" len=\(draft.count) -> \(level) (was \(session.presence))")
-        #endif
+        Unpackd.log.debug("""
+            draft=\(Unpackd.draft(draft), privacy: .private) \
+            len=\(draft.count, privacy: .public) \
+            -> \(String(describing: level), privacy: .public) \
+            (was \(String(describing: self.session.presence), privacy: .public))
+            """)
+
         if session.setPresence(level) {
-            // Exactly one subtle pulse on arriving at NUDGE — "visual + haptic,
-            // never disruptive". `setPresence` returns true only on the way up,
-            // so cooling back down is silent.
+            // `setPresence` returns true only on the way *up*, so cooling back
+            // down is silent and does not seal the hash — editing a heated
+            // draft down to nothing and back up can nudge again, which is the
+            // intended behaviour.
+            lastNudgedTextHash = hash
+
+            // Exactly one subtle pulse on arriving at NUDGE — "visual +
+            // haptic, never disruptive".
             //
             // `triggerHapticFeedback` rather than `triggerFeedback(for:on:)`:
             // the latter also plays the key *click*, and an unprompted click
@@ -383,9 +412,7 @@ class KeyboardViewController: KeyboardInputViewController {
     /// sits above the keys and pushes the host app's content up. There is no
     /// hard height cap, but the system dock (globe/mic) stays on top of us.
     private func setKeyboardHeight(_ height: CGFloat) {
-        #if DEBUG
-        print("[Unpackd] height -> \(height)")
-        #endif
+        Unpackd.log.debug("height -> \(height, privacy: .public)")
         if let constraint = heightConstraint {
             guard constraint.constant != height else { return }
             constraint.constant = height

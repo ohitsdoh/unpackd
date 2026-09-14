@@ -7,6 +7,7 @@
 
 import Foundation
 import NaturalLanguage
+import os
 
 /// Reads a draft and answers one question: does this look like a moment where
 /// space might help?
@@ -109,9 +110,10 @@ final class HeatDetector {
         let emotion = classify(draft, using: Self.emotionScheme)
         let polarity = Double(classify(draft, using: .sentimentScore) ?? "") ?? 0
 
-        #if DEBUG
-        print("[Unpackd]   emotion=\(emotion ?? "nil") polarity=\(polarity)")
-        #endif
+        Unpackd.log.debug("""
+            emotion=\(emotion ?? "nil", privacy: .public) \
+            polarity=\(polarity, privacy: .public)
+            """)
 
         let isHot = emotion == "Anger" || emotion == "Disgust"
         let isNegative = isHot || emotion == "Sadness"
