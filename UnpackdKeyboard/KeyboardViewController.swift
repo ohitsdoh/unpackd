@@ -20,6 +20,23 @@ class KeyboardViewController: KeyboardInputViewController {
     /// Decides when the spacebar should quietly come to life.
     private let heatDetector = HeatDetector()
 
+    /// The draft the detector last ran on, so it does not run again on an
+    /// event that did not change the text.
+    ///
+    /// WHY THIS EXISTS
+    /// `textDidChange` is called for far more than typing: moving the cursor,
+    /// changing the selection, and gaining or losing focus all fire it. The
+    /// draft string is identical across every one of those — `currentDraft()`
+    /// is `before + after`, and a cursor tap only moves the boundary between
+    /// them — but without this the classifier still re-ran and `setPresence`
+    /// still saw a change, because presence had been reset to `.rest` in the
+    /// meantime. The visible symptom was the nudge firing when the user
+    /// tapped somewhere in the field rather than when they typed.
+    ///
+    /// `nil` rather than `""` so the first check after launch always runs;
+    /// an empty field is a legitimate draft value, not "not yet read".
+    private var lastCheckedDraft: String?
+
 
     // MARK: - Lifecycle
 
@@ -200,6 +217,11 @@ class KeyboardViewController: KeyboardInputViewController {
     @MainActor
     private func beginReflection() {
         session.begin(draft: currentDraft())
+        // `begin` drops presence back to `.rest` while the draft text is
+        // unchanged. The cache would then treat the next check as a no-op and
+        // the key could never nudge again for this message, so the dedupe is
+        // invalidated wherever presence is reset behind its back.
+        lastCheckedDraft = nil
     }
 
     @MainActor
@@ -210,6 +232,9 @@ class KeyboardViewController: KeyboardInputViewController {
         case .rewrite:
             session.beginRewrite(draft: currentDraft())
         }
+        // `beginBreathe` and `beginRewrite` both reset presence; see
+        // `beginReflection` for why the cache has to be dropped with it.
+        lastCheckedDraft = nil
     }
 
     @MainActor
@@ -279,10 +304,15 @@ class KeyboardViewController: KeyboardInputViewController {
     /// `textDidChangeAsync` is the one whose draft is trustworthy, but it is
     /// KeyboardKit's own addition and nothing in the shipped binary proves it
     /// fires in every host app. This one always fires. Reading a stale draft
-    /// here is harmless — the async call corrects it a moment later, and
-    /// `setPresence` ignores a level it is already at — whereas relying solely
-    /// on a hook that might not fire is how this bug happened in the first
-    /// place. Both cost 4ms.
+    /// here is harmless — the async call corrects it a moment later — whereas
+    /// relying solely on a hook that might not fire is how this bug happened
+    /// in the first place. Both cost 4ms.
+    ///
+    /// NOTE: this hook also fires on events that change no text at all —
+    /// cursor moves, selection changes, focus. `updatePresence` dedupes on the
+    /// draft string to absorb those; an earlier comment here claimed
+    /// `setPresence` was enough, which was wrong, because presence has usually
+    /// been reset to `.rest` by then and every such event looked like a rise.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
         scheduleHeatCheck()
@@ -315,6 +345,16 @@ class KeyboardViewController: KeyboardInputViewController {
         guard !session.isOpen else { return }
 
         let draft = currentDraft()
+
+        // Nothing the user wrote has changed, so the verdict cannot have
+        // changed either — this is a cursor move, a selection change or a
+        // focus event. Skipping here is what keeps the nudge tied to typing
+        // rather than to tapping around the field. It also means the two
+        // hooks below can both call in freely: whichever arrives second is
+        // a no-op instead of a second classifier run.
+        guard draft != lastCheckedDraft else { return }
+        lastCheckedDraft = draft
+
         let level = heatDetector.presence(for: draft)
         #if DEBUG
         print("[Unpackd] fullAccess=\(hasFullAccess) draft=\"\(draft.prefix(60))\" len=\(draft.count) -> \(level) (was \(session.presence))")
