@@ -29,6 +29,17 @@ targets:
     platform: iOS
     sources:
       - path: Unpackd
+      # "Unpack later" is written by the keyboard and read by the app, so the
+      # model and its store are compiled into both targets — the same approach
+      # Typography.swift takes below, for the same reason: a shared framework
+      # for two small types costs more than compiling one file twice.
+      # `SavedMoment+Unpack.swift` is deliberately NOT here; it bridges the
+      # keyboard's flow types, which the app has no business knowing about.
+      - path: UnpackdKeyboard/Reflect/SavedMoment.swift
+      - path: UnpackdKeyboard/Reflect/SavedMomentStore.swift
+      # "Remember" runs the other way round: the APP authors these thoughts
+      # and the keyboard only reads them. Shared for the same reason.
+      - path: UnpackdKeyboard/Reflect/RememberedThought.swift
       # Inter, for the app's UI type. Shared with the extension rather than
       # duplicated into each target's folder: an app extension cannot read
       # its container app's bundle, so both need their own copy of the files,

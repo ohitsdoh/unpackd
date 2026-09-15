@@ -347,12 +347,11 @@ enum KeyboardTheme {
 }
 
 enum KeyboardPracticeSettings {
-    private static let appGroupId = "group.com.hoamedigital.unpackd"
     private static let enabledPracticeKeysKey = "enabledPracticeKeys"
     private static let defaultEnabledKeys: Set<String> = ["B", "R"]
 
     private static var defaults: UserDefaults {
-        UserDefaults(suiteName: appGroupId) ?? .standard
+        UserDefaults(suiteName: AppGroup.identifier) ?? .standard
     }
 
     static func isEnabled(_ key: String) -> Bool {

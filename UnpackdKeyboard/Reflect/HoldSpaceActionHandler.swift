@@ -11,7 +11,16 @@ import QuartzCore
 
 enum KeyboardPracticeAction {
     case breathe
-    case rewrite
+    /// Hold R — show one of the user's own saved thoughts.
+    ///
+    /// R USED TO MEAN REWRITE, AND DELIBERATELY NO LONGER DOES.
+    /// Rewrite was reachable two ways: this key, and the "Rewrite" secondary
+    /// action on the hold-space panel. Only the shortcut was dropped — the
+    /// panel route is untouched, and is where the design puts Rewrite anyway
+    /// (it is reached from the Create Space menu). That frees R for Remember,
+    /// which the design brief assigns to it and which has no other entry
+    /// point at all.
+    case remember
 }
 
 /// Intercepts long-press on the space key and opens the reflect panel
@@ -49,7 +58,7 @@ final class HoldSpaceActionHandler: StandardKeyboardActionHandler {
         case "B" where KeyboardPracticeSettings.isEnabled("B"):
             return .breathe
         case "R" where KeyboardPracticeSettings.isEnabled("R"):
-            return .rewrite
+            return .remember
         default:
             return nil
         }

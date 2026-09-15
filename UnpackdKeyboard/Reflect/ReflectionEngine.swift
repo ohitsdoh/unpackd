@@ -118,6 +118,65 @@ protocol ReflectionEngine: AnyObject {
     /// into the same call that reports the emotion would only make the model
     /// echo it back.
     func reflect(on draft: String) async throws -> Reflection
+
+    /// Generate the next question in the unpack flow.
+    ///
+    /// The question and its options are both generated from `context` — the
+    /// draft plus every answer so far — which is what makes the second
+    /// question follow from the first rather than being a fixed list. See
+    /// `UnpackQuestion` for why the *shape* stays static while the content
+    /// does not.
+    func question(for context: UnpackContext) async throws -> UnpackQuestion
+
+    /// Read back what the user seems to be trying to say.
+    ///
+    /// Produces the "It sounds like you want to..." card. Deliberately
+    /// separate from `reflect`: this happens *before* any language is
+    /// generated, and the user can choose to go deeper instead of accepting
+    /// it, in which case no rewrite is ever requested.
+    func insight(for context: UnpackContext) async throws -> UnpackInsight
+
+    /// Turn everything unpacked so far into a message they could send.
+    ///
+    /// Distinct from `reflect(on:)`, which only sees the raw draft. This is
+    /// the "Help me say it" path and is conditioned on the user's stated
+    /// intent, so it can say what they meant rather than a politer version of
+    /// what they typed.
+    func express(for context: UnpackContext, insight: UnpackInsight, style: ExpressionStyle?) async throws -> Reflection
+}
+
+/// How the user asked for the next attempt to differ ("Try another").
+///
+/// The deck is firm that this changes *expression, not intention*: the user
+/// has already told us what they mean, and a re-roll that quietly reinterprets
+/// that would undo the whole flow. So this is a closed set of adjustments to
+/// delivery, never to substance.
+enum ExpressionStyle: String, CaseIterable, Identifiable {
+    case softer
+    case moreDirect
+    case shorter
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .softer: "Softer"
+        case .moreDirect: "More direct"
+        case .shorter: "Shorter"
+        }
+    }
+
+    /// The instruction handed to the model.
+    var instruction: String {
+        switch self {
+        case .softer:
+            "Say the same thing more gently. Same meaning, warmer delivery."
+        case .moreDirect:
+            "Say the same thing more plainly and directly. Do not soften it."
+        case .shorter:
+            "Say the same thing in fewer words. Cut, do not rephrase."
+        }
+    }
 }
 
 // MARK: - Preview / simulator stub
@@ -127,6 +186,57 @@ protocol ReflectionEngine: AnyObject {
 final class StubReflectionEngine: ReflectionEngine {
     var availability: Result<Void, ReflectionUnavailable> { .success(()) }
     func prewarm() {}
+
+    func question(for context: UnpackContext) async throws -> UnpackQuestion {
+        try? await Task.sleep(for: .milliseconds(500))
+        // Two different canned questions so the stub exercises the flow's
+        // second step rather than repeating the first.
+        if context.depth == 0 {
+            return UnpackQuestion(
+                prompt: "What do you want them to understand?",
+                options: [
+                    "I need some space",
+                    "I want to feel heard",
+                    "I don't want this to escalate",
+                    "I'm trying to explain my perspective"
+                ]
+            )
+        }
+        return UnpackQuestion(
+            prompt: "What feels most important?",
+            options: [
+                "They understand why I'm upset",
+                "We talk when we're both calmer",
+                "I say this without making it worse",
+                "That I still care about this"
+            ]
+        )
+    }
+
+    func insight(for context: UnpackContext) async throws -> UnpackInsight {
+        try? await Task.sleep(for: .milliseconds(500))
+        return UnpackInsight(
+            text: "It sounds like you want to be heard without making this bigger."
+        )
+    }
+
+    func express(for context: UnpackContext, insight: UnpackInsight, style: ExpressionStyle?) async throws -> Reflection {
+        try? await Task.sleep(for: .milliseconds(600))
+        let text = switch style {
+        case .softer:
+            "I'd really like to talk about this, but not right now. I need a little space so we can come back to it when we're both in a better headspace."
+        case .moreDirect:
+            "I want to talk about this, just not right now. I need some space first."
+        case .shorter:
+            "Can we come back to this later? I need a little space."
+        case nil:
+            "Can we come back to this a little later? I do want to talk about it — I just need a little space so we can have the conversation when we're both calmer."
+        }
+        return Reflection(
+            detectedEmotion: .frustrated,
+            rewrites: [.init(id: 0, text: text, toneLabel: "Clear")]
+        )
+    }
 
     func reflect(on draft: String) async throws -> Reflection {
         try? await Task.sleep(for: .milliseconds(600))

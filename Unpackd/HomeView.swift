@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct HomeView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
@@ -156,6 +157,13 @@ private struct MainAppView: View {
 }
 
 private struct InsightsView: View {
+
+    /// Read on appear rather than observed: the keyboard writes these from a
+    /// different process, so there is nothing here to observe — and a moment
+    /// can only be added while the user is in the keyboard, which means they
+    /// are not looking at this screen at the time.
+    @State private var moments: [SavedMoment] = []
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -194,12 +202,24 @@ private struct InsightsView: View {
                     BrandSurface {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionEyebrow("Unpackd moments")
-                            Text("No moments yet.")
-                                .font(Typography.inter(19, .semibold))
-                            Text("The current build does not store message history. That keeps the first version honest while the keyboard experience is being validated.")
-                                .font(Typography.inter(14))
-                                .foregroundStyle(UnpackdStyle.muted)
-                                .lineSpacing(3)
+
+                            if moments.isEmpty {
+                                Text("No moments yet.")
+                                    .font(Typography.inter(19, .semibold))
+                                // Nothing is stored unless the user taps
+                                // "Unpack later" — see SavedMomentStore for
+                                // why that is the only write in the keyboard.
+                                Text("When you tap \u{201C}Unpack later\u{201D} on the keyboard, the moment is saved here so you can come back to it.")
+                                    .font(Typography.inter(14))
+                                    .foregroundStyle(UnpackdStyle.muted)
+                                    .lineSpacing(3)
+                            } else {
+                                Text("Saved for later.")
+                                    .font(Typography.inter(19, .semibold))
+                                ForEach(moments) { moment in
+                                    SavedMomentRow(moment: moment)
+                                }
+                            }
                         }
                     }
                 }
@@ -209,12 +229,67 @@ private struct InsightsView: View {
             }
             .background(UnpackdStyle.canvas)
             .toolbar(.hidden, for: .navigationBar)
+            // Reloaded on foreground as well as on appear: the moment is
+            // saved from the KEYBOARD, in another app entirely, so the
+            // realistic path is "type elsewhere, save, come back here" —
+            // and `onAppear` alone would leave this screen stale for anyone
+            // who had already visited it this session.
+            .onAppear { moments = SavedMomentStore.load() }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIApplication.willEnterForegroundNotification
+                )
+            ) { _ in
+                moments = SavedMomentStore.load()
+            }
+        }
+    }
+}
+
+/// One saved moment: the draft they stepped away from, and anything they had
+/// already worked out about it.
+private struct SavedMomentRow: View {
+    let moment: SavedMoment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(moment.draft)
+                .font(Typography.inter(15))
+                .foregroundStyle(UnpackdStyle.ink)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Only the answers, not the questions: the questions were ours and
+            // the answers are theirs, and this is meant to hand back what they
+            // worked out rather than replay the interview.
+            if !moment.answers.isEmpty {
+                Text(moment.answers.map(\.response).joined(separator: " · "))
+                    .font(Typography.inter(13))
+                    .foregroundStyle(UnpackdStyle.muted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text(moment.savedAt.formatted(.relative(presentation: .named)))
+                .font(Typography.inter(12))
+                .foregroundStyle(UnpackdStyle.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(UnpackdStyle.muted.opacity(0.18))
+                .frame(height: 0.5)
         }
     }
 }
 
 private struct PracticesView: View {
     @State private var enabledKeys = PracticeSettings.enabledKeys()
+
+    /// The words the user wants close. Authored here, read by the keyboard —
+    /// see `RememberedThoughtStore`.
+    @State private var thoughts: [RememberedThought] = []
 
     var body: some View {
         NavigationStack {
@@ -243,6 +318,8 @@ private struct PracticesView: View {
                         }
                     }
 
+                    RememberEditor(thoughts: $thoughts)
+
                     BrandSurface {
                         VStack(alignment: .leading, spacing: 12) {
                             SectionEyebrow("Coming later")
@@ -250,7 +327,7 @@ private struct PracticesView: View {
                             Divider()
                             RoadmapRow(key: "G", title: "Ground", detail: "A sensory reset before replying")
                             Divider()
-                            RoadmapRow(key: "M", title: "Remember", detail: "Bring saved words back when needed")
+                            RoadmapRow(key: "W", title: "Wind down", detail: "A softer close to the day")
                         }
                     }
                 }
@@ -260,7 +337,10 @@ private struct PracticesView: View {
             }
             .background(UnpackdStyle.canvas)
             .toolbar(.hidden, for: .navigationBar)
-            .onAppear { enabledKeys = PracticeSettings.enabledKeys() }
+            .onAppear {
+                enabledKeys = PracticeSettings.enabledKeys()
+                thoughts = RememberedThoughtStore.load()
+            }
         }
     }
 }
@@ -418,6 +498,110 @@ private struct InsightMetric: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(UnpackdStyle.border, lineWidth: 0.75)
         )
+    }
+}
+
+/// Authoring for "Remember" — the words the keyboard hands back on hold-R.
+///
+/// Lives in the APP, not the keyboard, on purpose. These are meant to be
+/// written in a calm moment and read in a hard one; offering to compose one
+/// from inside the keyboard would be asking for clarity at exactly the moment
+/// the user has least of it.
+private struct RememberEditor: View {
+    @Binding var thoughts: [RememberedThought]
+
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionEyebrow("Words to remember")
+
+            BrandSurface {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Hold R on the keyboard to see one of these.")
+                        .font(Typography.inter(14))
+                        .foregroundStyle(UnpackdStyle.muted)
+                        .lineSpacing(3)
+
+                    HStack(spacing: 10) {
+                        TextField("I can be honest and still be kind.", text: $draft, axis: .vertical)
+                            .font(Typography.inter(15))
+                            .foregroundStyle(UnpackdStyle.ink)
+                            .lineLimit(1...3)
+                            .onChange(of: draft) { _, new in
+                                // Clamp rather than reject, so a long paste
+                                // loses its tail instead of the whole paste.
+                                if new.count > RememberedThought.characterLimit {
+                                    draft = String(new.prefix(RememberedThought.characterLimit))
+                                }
+                            }
+                            .onSubmit(add)
+
+                        Button(action: add) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(UnpackdStyle.paper)
+                                .frame(width: 34, height: 34)
+                                .background(Circle().fill(UnpackdStyle.ink))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(draft.isBlank)
+                        .opacity(draft.isBlank ? 0.35 : 1)
+                        .accessibilityLabel("Add")
+                    }
+
+                    if !thoughts.isEmpty {
+                        Divider()
+                        ForEach(thoughts) { thought in
+                            ThoughtRow(thought: thought) { remove(thought) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func add() {
+        guard let trimmed = draft.trimmedOrNil else { return }
+        // Newest first, matching the order the keyboard and this list both
+        // present. The keyboard shuffles for display; the stored order is
+        // still the authoring order so this list stays predictable to edit.
+        thoughts.insert(RememberedThought(text: trimmed), at: 0)
+        RememberedThoughtStore.save(thoughts)
+        draft = ""
+    }
+
+    private func remove(_ thought: RememberedThought) {
+        thoughts.removeAll { $0.id == thought.id }
+        RememberedThoughtStore.save(thoughts)
+    }
+}
+
+private struct ThoughtRow: View {
+    let thought: RememberedThought
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Serif here too, matching how it will look on the keyboard, so
+            // what you write is what you see when it comes back.
+            Text(thought.text)
+                .font(.system(size: 15, design: .serif))
+                .foregroundStyle(UnpackdStyle.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onDelete) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(UnpackdStyle.muted)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete")
+        }
+        .padding(.vertical, 4)
     }
 }
 

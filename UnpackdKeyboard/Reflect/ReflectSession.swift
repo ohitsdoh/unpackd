@@ -61,20 +61,71 @@ final class ReflectSession {
     enum Phase: Equatable {
         /// Panel closed, normal typing.
         case idle
-        /// Panel open on the Breathe / Reflect / Rewrite / Save choice.
+        /// Panel open, deliberately empty. "Create space." — see `settling`.
+        case settling
+        /// Panel open on the Unpack this / Rewrite / Unpack later choice.
         case choosing
         /// Breathing animation running.
         case breathing
         /// Waiting on the model.
         case thinking
+        /// A generated question, waiting for the user to tap an answer.
+        case asking(UnpackQuestion)
+        /// The user chose "Something else..." and is typing their own answer.
+        case composing(UnpackQuestion)
+        /// The "It sounds like you want to..." card.
+        case reflecting(UnpackInsight)
+        /// Choosing how the next expression should differ ("Try another").
+        case adjusting
+        /// A generated message, with Use this / Try another / Edit.
+        case expressing(Reflection)
+        /// Editing a generated message in place before using it.
+        ///
+        /// Carries NO payload: the live text is `editedMessage`, which the
+        /// editor is bound to. A `case editing(String)` would be a second
+        /// apparent home for one string, frozen at the moment the editor
+        /// opened — so the next person to bind it would silently read the
+        /// pre-edit text.
+        case editing
         /// Rewrites ready.
         case reviewing(Reflection)
+        /// The moment was saved and the panel is about to close.
+        case saved
+        /// One of the user's own saved thoughts, from "Remember".
+        ///
+        /// Carries the thought rather than an index so the view never has to
+        /// reach back into the session to resolve what it is showing — and so
+        /// an empty list is representable as a distinct case below rather than
+        /// as an out-of-range index.
+        case remembering(RememberedThought)
+        /// "Remember" was opened with nothing saved yet.
+        case nothingRemembered
         /// Could not produce a rewrite.
         case unavailable(ReflectionUnavailable)
     }
 
+    /// How long the panel stays deliberately empty before offering anything.
+    ///
+    /// The design brief's rule is "don't fill the space the instant we create
+    /// it": holding the spacebar is a request for a pause, and a panel that
+    /// arrives already asking a question has given the user a new decision
+    /// instead of a moment. The deck budgets 600-800ms for this.
+    ///
+    /// It is a real cost, so it is spent once — only on the way *in* from a
+    /// hold. Every later screen in the flow appears immediately.
+    static let settleDuration: Duration = .milliseconds(700)
+
     private(set) var phase: Phase = .idle
-    private(set) var draft: String = ""
+    /// The draft this moment is about.
+    ///
+    /// DERIVED, NOT STORED.
+    /// This was a stored property set alongside `context.draft` from the same
+    /// argument, and the two then drifted: `beginBreathe` cleared one,
+    /// `dismiss` cleared the other. Two names for one string, with nothing in
+    /// the type system requiring them to agree, is how a rewrite ends up
+    /// running against a draft the panel is no longer showing. `context` owns
+    /// it; everything else reads through here.
+    var draft: String { context.draft }
 
     /// How far through the press-and-hold gesture we are, 0...1.
     ///
@@ -188,6 +239,45 @@ final class ReflectSession {
     /// Which rewrite the user is currently looking at.
     var selectedRewrite: Int = 0
 
+    /// Everything the user has told us during this unpack, accumulated.
+    /// Rebuilt on every `begin` so one moment never leaks into the next.
+    private(set) var context = UnpackContext(draft: "")
+
+    /// The insight currently on screen, kept so "Keep unpacking" and
+    /// "Try another" can both refer back to it without re-deriving it.
+    private var currentInsight: UnpackInsight?
+
+    /// What the user typed under "Something else...".
+    /// Bound directly by the composer's text field.
+    var composedAnswer: String = ""
+
+    /// The message being edited in place, bound by the editor's text field.
+    var editedMessage: String = ""
+
+    /// How many questions the flow asks before offering a reflection.
+    ///
+    /// Two by default, per the deck ("Two questions by default. Tap, don't
+    /// type."). Each question is a model call the user waits on, and a third
+    /// turns a pause into an interview — "Keep unpacking" exists for anyone
+    /// who actually wants to go deeper, and is their choice rather than ours.
+    static let defaultQuestionCount = 2
+
+    /// How many answers the flow is currently waiting for before it reflects.
+    ///
+    /// A MOVING TARGET, NOT A CONSTANT COMPARISON.
+    /// This started as `depth >= defaultQuestionCount`, which quietly broke
+    /// "Keep unpacking": by the time that button exists the user has already
+    /// answered two questions, so the extra question it asked came back, hit
+    /// the same already-true condition, and bounced straight to a new insight
+    /// — the deeper answer was collected but the flow could never go deeper
+    /// than one extra step, and a second "Keep unpacking" behaved identically
+    /// to the first.
+    ///
+    /// Raising the target as each extra question is asked keeps the rule
+    /// ("reflect once you have answered everything asked of you") true at any
+    /// depth, so the flow can go as deep as the user wants to take it.
+    private var questionsWanted = ReflectSession.defaultQuestionCount
+
     private let engine: ReflectionEngine
     private var task: Task<Void, Never>?
 
@@ -197,27 +287,73 @@ final class ReflectSession {
 
     var isOpen: Bool { phase != .idle }
 
+    /// Open the panel on `phase`, clearing the previous moment first.
+    ///
+    /// The practice keys (Breathe, Remember) each used to do this by hand and
+    /// each did a different subset — one cleared `selectedRewrite`, the other
+    /// cleared nothing, and both repeated `presence = .rest`. Routing them
+    /// through one opener means a new practice cannot forget a step, and the
+    /// reason presence drops is written once: the user has stopped to deal
+    /// with the moment, so the key must not still be nudging about it
+    /// underneath an open panel, nor resume the instant it closes.
+    private func openPanel(at phase: Phase, draft: String) {
+        resetFlowState(for: draft)
+        cancelHold()
+        presence = .rest
+        self.phase = phase
+    }
+
+    /// Return every piece of per-moment state to its starting value.
+    ///
+    /// ONE LIST, NOT FOUR.
+    /// `begin`, `beginBreathe`, `remember` and `dismiss` each used to clear a
+    /// different subset, and they had already drifted: `begin` cleared
+    /// `lastStep` and `selectedRewrite` but left `composedAnswer`,
+    /// `editedMessage` and the loaded thoughts behind, while `dismiss` cleared
+    /// those and left the other two. Either omission leaks one moment's state
+    /// into the next — a half-typed "Something else…" answer reappearing
+    /// under a different draft, say.
+    ///
+    /// Add new per-moment state HERE, never at a call site: every entry point
+    /// reaches this through `openPanel`, so this list is the only thing that
+    /// has to be complete.
+    private func resetFlowState(for draft: String) {
+        context = UnpackContext(draft: draft)
+        questionsWanted = Self.defaultQuestionCount
+        currentInsight = nil
+        lastStep = .rewrite
+        selectedRewrite = 0
+        composedAnswer = ""
+        editedMessage = ""
+        thoughts = []
+        thoughtIndex = 0
+    }
+
     // MARK: - Entry
 
     /// Open the panel for the current draft.
+    ///
+    /// Enters `.settling` — deliberately empty — and only offers the actions
+    /// once `settleDuration` has passed. See that constant for why the pause
+    /// is the feature rather than latency to be optimised away.
     func begin(draft: String) {
-        self.draft = draft
-        self.selectedRewrite = 0
-        // The hold has done its job; the panel's own animation takes over from
-        // here. Leaving this lit would keep the spacebar at full iridescence
-        // underneath an open panel.
-        cancelHold()
-        // The draft that raised the presence is about to be dealt with, so the
-        // key returns to rest rather than still nudging about a message the
-        // user has now stopped to look at.
-        presence = .rest
         // Availability is checked up front rather than after the user picks
         // "Rewrite" — offering an action that is going to fail is worse than
         // not offering it.
         if case .failure(let reason) = engine.availability {
-            phase = .unavailable(reason)
+            openPanel(at: .unavailable(reason), draft: draft)
         } else {
-            phase = .choosing
+            openPanel(at: .settling, draft: draft)
+            task?.cancel()
+            task = Task { [weak self] in
+                try? await Task.sleep(for: Self.settleDuration)
+                guard let self, !Task.isCancelled else { return }
+                // Only advance if nothing else moved us on. A user who tapped
+                // through or dismissed during the pause must not be yanked
+                // back to the chooser.
+                guard case .settling = phase else { return }
+                phase = .choosing
+            }
         }
         #if DEBUG
         Unpackd.log.debug("""
@@ -228,62 +364,259 @@ final class ReflectSession {
     }
 
     func beginBreathe() {
-        draft = ""
-        selectedRewrite = 0
-        phase = .breathing
-    }
-
-    func beginRewrite(draft: String) {
-        begin(draft: draft)
-        guard case .choosing = phase else { return }
-        rewrite()
+        // Opened with an EMPTY draft, deliberately: Breathe is about the
+        // moment, not the message, so it carries none of it into the panel.
+        openPanel(at: .breathing, draft: "")
     }
 
     func dismiss() {
         task?.cancel()
         task = nil
         phase = .idle
+        resetFlowState(for: "")
         cancelHold()
     }
 
     // MARK: - Actions
 
-    func breathe() {
-        phase = .breathing
-    }
+    // MARK: Unpack flow
 
-    func rewrite() {
-        guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    /// "Unpack this" — start the guided flow with the first question.
+    func unpack() {
+        guard !draft.isBlank else {
             phase = .unavailable(.emptyDraft)
             return
         }
+        askNextQuestion()
+    }
+
+    /// Ask the model for the next question, given everything answered so far.
+    private func askNextQuestion() {
+        lastStep = .question
+        run { [context] engine in
+            .asking(try await engine.question(for: context))
+        }
+    }
+
+    /// The user tapped one of the generated options.
+    func answer(_ response: String, to question: UnpackQuestion, isUserWritten: Bool = false) {
+        context.answers.append(
+            .init(question: question.prompt, response: response, isUserWritten: isUserWritten)
+        )
+        composedAnswer = ""
+
+        // Reflect once everything asked has been answered; otherwise keep
+        // asking. The target moves when the user chooses to go deeper — see
+        // `questionsWanted`.
+        if context.depth >= questionsWanted {
+            reflectBack()
+        } else {
+            askNextQuestion()
+        }
+    }
+
+    /// The user chose "Something else..." and wants to type their own answer.
+    func composeAnswer(to question: UnpackQuestion) {
+        composedAnswer = ""
+        phase = .composing(question)
+    }
+
+    /// Submit what they typed under "Something else...".
+    ///
+    /// Marked as the user's own words, which the model is told to treat as
+    /// ground truth rather than as one more guess — see `UnpackContext.Answer`.
+    func submitComposedAnswer(to question: UnpackQuestion) {
+        guard let trimmed = composedAnswer.trimmedOrNil else { return }
+        answer(trimmed, to: question, isUserWritten: true)
+    }
+
+    /// Produce the "It sounds like you want to..." card.
+    private func reflectBack() {
+        lastStep = .insight
+        // The insight is stashed by `run` when the phase lands, not here —
+        // see the note by its cancellation guard.
+        run { [context] engine in
+            .reflecting(try await engine.insight(for: context))
+        }
+    }
+
+    /// "Keep unpacking" — one more question before generating any language.
+    ///
+    /// Raises the target so the answer to this question is not immediately
+    /// treated as "everything asked" and bounced back to a reflection. See
+    /// `questionsWanted`.
+    func keepUnpacking() {
+        questionsWanted = context.depth + 1
+        askNextQuestion()
+    }
+
+    /// "Help me say it" — turn the accumulated context into a message.
+    func express(style: ExpressionStyle? = nil) {
+        guard let insight = currentInsight else {
+            // Without an insight there is nothing to express from. Reflecting
+            // first is the correct recovery, not an error: the flow is simply
+            // one step behind where the caller thought it was.
+            reflectBack()
+            return
+        }
+        lastStep = .expression(style)
+        run { [context] engine in
+            .expressing(try await engine.express(for: context, insight: insight, style: style))
+        }
+    }
+
+    /// "Try another" — offer the softer / more direct / shorter choice.
+    func adjust() {
+        phase = .adjusting
+    }
+
+    /// "Edit" — make the generated message editable in place.
+    func edit(_ text: String) {
+        editedMessage = text
+        phase = .editing
+    }
+
+    // MARK: Remember
+
+    /// The user's saved thoughts, loaded when Remember opens.
+    ///
+    /// Read once per open rather than per swipe: these are authored in the
+    /// container app, so they cannot change while the keyboard is on screen,
+    /// and re-reading `UserDefaults` on every swipe would be pure cost.
+    private var thoughts: [RememberedThought] = []
+
+    /// Which thought is showing. Only meaningful while `phase` is
+    /// `.remembering`.
+    private var thoughtIndex = 0
+
+    /// "Remember" — hold R. Show one of the user's own saved thoughts.
+    ///
+    /// Deliberately touches neither the draft nor the model. The design's
+    /// promise is "nothing is typed or sent, just a moment for you", so this
+    /// is the one entry point that reads no draft at all.
+    func remember() {
+        // Remember reads no draft at all, but the key can still be lit from
+        // whatever the user was typing before they reached for it.
+        openPanel(at: .nothingRemembered, draft: "")
+        // Shuffled, not ordered: Remember is meant to be opened repeatedly,
+        // and always leading with the same thought would make the rest of the
+        // list invisible in practice.
+        thoughts = RememberedThoughtStore.load().shuffled()
+        if let first = thoughts.first { phase = .remembering(first) }
+    }
+
+    /// "Another" — the next saved thought.
+    ///
+    /// Wraps rather than stopping at the end: there is no progress to be made
+    /// through this list and no reason to strand the user on a last card with
+    /// a dead button.
+    func anotherThought() {
+        guard !thoughts.isEmpty else { return }
+        thoughtIndex = (thoughtIndex + 1) % thoughts.count
+        phase = .remembering(thoughts[thoughtIndex])
+    }
+
+    /// "Unpack later" — save the moment and close, leaving the draft alone.
+    ///
+    /// The draft is deliberately NOT touched: the promise is that stepping
+    /// away costs nothing, so the message stays exactly as it was typed.
+    func unpackLater() {
+        // `save` drops a moment with nothing in it — see
+        // `SavedMoment.isWorthKeeping`. The confirmation below is shown either
+        // way: the promise "Unpack later" makes is that stepping away costs
+        // nothing, and it has already kept that promise by leaving the draft
+        // untouched.
+        SavedMomentStore.save(SavedMoment(context: context))
+        task?.cancel()
+        task = nil
+        phase = .saved
+    }
+
+    /// What the flow was doing when it failed, so a retry resumes it.
+    ///
+    /// Without this, the panel's only retry was `rewrite()` — the draft-only
+    /// path — so a question that failed on a transient throttle dumped the
+    /// user into a plain rewrite of their original text, silently discarding
+    /// the answers they had already given. A failure should cost the retry,
+    /// not the progress.
+    private enum Step: Equatable {
+        case question
+        case insight
+        case expression(ExpressionStyle?)
+        /// The draft-only rewrite, reached from "Rewrite" rather than "Unpack".
+        case rewrite
+    }
+
+    private var lastStep: Step = .rewrite
+
+    /// Re-run whatever failed.
+    func retry() {
+        switch lastStep {
+        case .question: askNextQuestion()
+        case .insight: reflectBack()
+        case .expression(let style): express(style: style)
+        case .rewrite: rewrite()
+        }
+    }
+
+
+    /// Run one engine call, showing `.thinking` while it is in flight and
+    /// mapping any failure onto `.unavailable`.
+    ///
+    /// Every step of the flow has exactly this shape, and writing it out four
+    /// times is how one of them ends up missing the cancellation check or
+    /// swallowing a typed error. `[weak self]` for the same reason `rewrite`
+    /// uses it: cancelling does not abort an in-flight `respond`, so a strong
+    /// capture would pin the session and its engine for the whole of an
+    /// abandoned inference.
+    ///
+    /// `[weak self]`: cancelling does not abort an in-flight `respond` — the
+    /// model call runs to completion regardless. A strong capture would pin
+    /// this session, and through it the engine, for the whole of an abandoned
+    /// inference, which is exactly the moment footprint is highest and the
+    /// user has already dismissed the panel.
+    ///
+    /// `work` is `@MainActor`-isolated, and has to be: `ReflectionEngine` is
+    /// itself main-actor isolated and non-Sendable, so a non-isolated closure
+    /// taking one cannot be handed the engine without Swift 6 calling it a
+    /// data race ("sending 'engine' risks causing data races"). Isolating the
+    /// closure costs nothing — every implementation is an `await` on an
+    /// already-isolated method, which suspends rather than blocking.
+    private func run(
+        _ work: @escaping @MainActor (ReflectionEngine) async throws -> Phase
+    ) {
         phase = .thinking
         task?.cancel()
-        // `[weak self]`: cancelling does not abort an in-flight `respond` — the
-        // model call runs to completion regardless. A strong capture would pin
-        // this session, and through it the engine, for the whole of an
-        // abandoned inference, which is exactly the moment footprint is
-        // highest and the user has already dismissed the panel.
-        task = Task { [weak self, engine, draft] in
+        task = Task { [weak self, engine] in
             let outcome: Phase
             do {
-                let reflection = try await engine.reflect(on: draft)
-                outcome = .reviewing(reflection)
+                outcome = try await work(engine)
             } catch let reason as ReflectionUnavailable {
                 outcome = .unavailable(reason)
             } catch {
                 outcome = .unavailable(.failed(error.localizedDescription))
             }
             guard let self, !Task.isCancelled else { return }
+            // Anything a step needs to remember is read back OFF the landed
+            // phase here, inside the cancellation guard — never assigned from
+            // the work closure, which runs before it and would outlive a
+            // dismissal the user has already made.
+            if case .reflecting(let insight) = outcome { currentInsight = insight }
             phase = outcome
         }
     }
 
-    var currentRewriteText: String? {
-        guard case .reviewing(let reflection) = phase else { return nil }
-        guard reflection.rewrites.indices.contains(selectedRewrite) else { return nil }
-        return reflection.rewrites[selectedRewrite].text
+    func rewrite() {
+        lastStep = .rewrite
+        guard !draft.isBlank else {
+            phase = .unavailable(.emptyDraft)
+            return
+        }
+        run { [draft] engine in
+            .reviewing(try await engine.reflect(on: draft))
+        }
     }
+
 }
 
 // User-facing copy for these failures lives in UI/ReflectionUnavailable+Copy.swift;

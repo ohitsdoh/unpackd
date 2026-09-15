@@ -84,14 +84,7 @@ struct RewriteView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(KeyboardTheme.cardBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(KeyboardTheme.border, lineWidth: 0.75)
-        )
+        .cardChrome(.roomy)
     }
 
     private func page(by offset: Int) {

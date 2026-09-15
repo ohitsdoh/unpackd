@@ -16,6 +16,10 @@ struct KeyboardRootView<KeyboardView: View>: View {
     let session: ReflectSession
     let onHeightChange: (CGFloat) -> Void
     let onApplyRewrite: (String) -> Void
+    /// Handed down to the panel's text entry, which registers itself as
+    /// KeyboardKit's `textInputProxy` while focused. Passed explicitly rather
+    /// than through the environment — see `ReflectPanel.keyboardContext`.
+    let keyboardContext: KeyboardContext
     /// Builds the keyboard, given a frame reporter and the current drift phase.
     /// The phase reaches the spacebar's own content, which draws the iridescent
     /// film — see `SpacebarWordmark`.
@@ -152,8 +156,30 @@ struct KeyboardRootView<KeyboardView: View>: View {
             )
 
             VStack(spacing: 0) {
+                // Absorbs any gap between the height we ask for and the frame
+                // iOS actually gives us, and pins panel+keys to the bottom.
+                //
+                // WHY IT IS HERE
+                // A ZStack CENTRES its children. `setKeyboardHeight` installs a
+                // `.defaultHigh` constraint — deliberately losable — so the real
+                // frame can be taller than `keyboardHeight + panelHeight`. With
+                // the VStack centred, that surplus split above and below the
+                // keys, and the band above showed the system keyboard backdrop's
+                // rounded top edge through it: the "ledge" over the suggestion
+                // bar. Bottom-aligning puts the whole surplus at the top, where
+                // `Color.keyboardBackground` at the base of this stack already
+                // paints it, so a mismatch degrades to a slightly taller
+                // keyboard instead of a visible seam.
+                //
+                // `minLength: 0` so this costs nothing when the frame matches.
+                Spacer(minLength: 0)
+
                 if session.isOpen {
-                    ReflectPanel(session: session, onApplyRewrite: onApplyRewrite)
+                    ReflectPanel(
+                        session: session,
+                        onApplyRewrite: onApplyRewrite,
+                        keyboardContext: keyboardContext
+                    )
                         .onGeometryChange(for: CGFloat.self) { $0.size.height }
                             action: { panelHeight = $0 }
                         // Just a fade. The panel arriving is the *result* of the

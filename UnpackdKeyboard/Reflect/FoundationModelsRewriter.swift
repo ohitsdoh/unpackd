@@ -312,3 +312,216 @@ final class FoundationModelsRewriter: ReflectionEngine {
         }
     }
 }
+
+// MARK: - Unpack flow
+
+/// Structured output for one generated question.
+///
+/// The options are generated in the same call as the prompt, not in a second
+/// one. Two calls would double the rate-limit exposure for a screen the user
+/// is waiting on, and the options only make sense relative to the question —
+/// generating them apart invites a set that does not answer it.
+@Generable
+struct UnpackQuestionOutput {
+
+    @Guide(description: "A short, open question — at most eight words — that helps the user notice what they actually want from this conversation. Second person. Never diagnose the user, never label their mental state, never ask why they feel something. Ask about what they want to happen or what matters to them, e.g. 'What do you want them to understand?'.")
+    var prompt: String
+
+    @Guide(
+        description: "Four distinct answers the user might give, each written in FIRST PERSON as the user's own voice, e.g. 'I want to feel heard'. At most eight words each. They must be genuinely different intentions, not rewordings of one another, and must fit this specific conversation — reuse the concrete subject matter of the draft rather than generic feelings. Never include an option that blames the other person.",
+        .count(4)
+    )
+    var options: [String]
+}
+
+/// Structured output for the reflection card.
+@Generable
+struct UnpackInsightOutput {
+
+    @Guide(description: "One sentence, at most twenty words, starting with 'It sounds like you want' or similar, that reflects back what the user is trying to achieve in this conversation. Describe the MESSAGE and their intent, never the person — no diagnosis, no personality claims, no advice, no therapy jargon. Use what they selected, in their own terms.")
+    var text: String
+}
+
+/// Structured output for a generated message.
+///
+/// One rewrite, not three: by this point the user has told us what they mean,
+/// so a pager of alternatives is the wrong affordance — the deck replaces it
+/// with an explicit "Try another" that says *how* the next one should differ.
+@Generable
+struct ExpressionOutput {
+
+    @Guide(description: "The message the user could send, in first person, in their own natural voice. It must say what they told you they want to say. Own the speaker's feeling, no blame or accusation, no therapy jargon, no new facts. Keep the concrete subject matter of the original draft. At most three sentences.")
+    var text: String
+
+    @Guide(description: "One word describing this message's tone, e.g. Clear, Calm, Open, Direct, Warm.")
+    var toneLabel: String
+}
+
+extension FoundationModelsRewriter {
+
+    /// Instructions for the question and insight steps.
+    ///
+    /// A different job from `coreInstructions`, which is about rewriting. This
+    /// half of the flow does not produce any message at all — it helps the
+    /// user notice their own intent — and giving it the rewrite instructions
+    /// made it answer questions with rewritten drafts.
+    ///
+    /// The "never diagnose" line is load-bearing, not decoration: the deck's
+    /// rule is "context, not diagnosis", and a 3B model asked to be insightful
+    /// about an upset person will reach for amateur psychology unless told
+    /// plainly not to.
+    static var unpackInstructions: String {
+        """
+        You help someone notice what they actually want to say, before they send \
+        an angry message. You do not rewrite anything here.
+
+        Never diagnose, label, or psychoanalyse the user. Never give advice. \
+        Never take the other person's side or defend them. Describe what the \
+        user wants from the conversation, in their own plain words.
+
+        Stay concrete. Use the actual subject of their draft, not abstract \
+        feeling words. Never invent context you were not given.
+        """
+    }
+
+    /// One prompt body shared by the question and insight calls.
+    ///
+    /// Both need the same picture — the draft plus the path so far — and
+    /// building it in one place keeps the two calls consistent as the flow
+    /// grows. Kept terse: the 4096-token window covers instructions, prompt
+    /// and output together.
+    static func contextPrompt(_ context: UnpackContext) -> String {
+        var parts = ["Their draft message:\n\(context.draft)"]
+        if !context.promptSummary.isEmpty {
+            parts.append("What they have told you so far:\n\(context.promptSummary)")
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    func question(for context: UnpackContext) async throws -> UnpackQuestion {
+        if case .failure(let reason) = availability { throw reason }
+
+        // A fresh, unwarmed session: the unpack steps use different
+        // instructions from the rewrite, so they cannot draw on the sessions
+        // `prewarm` armed. Building one costs the cold start only on the
+        // first question of a flow — the model itself is already resident
+        // because `prewarm` loaded it at viewDidLoad.
+        let session = LanguageModelSession(instructions: Self.unpackInstructions)
+
+        let ask = context.depth == 0
+            ? "Ask what they want the other person to understand."
+            : "Ask a FOLLOW-UP question that builds on what they already told you. Do not repeat a question they have answered."
+
+        do {
+            let response = try await session.respond(
+                to: "\(Self.contextPrompt(context))\n\n\(ask)",
+                generating: UnpackQuestionOutput.self,
+                // Higher than the rewrite path: these options should feel
+                // varied rather than converge on the safest phrasing, and a
+                // tapped option is lower-stakes than a message that gets sent.
+                options: GenerationOptions(temperature: 0.8)
+            )
+            return Self.map(response.content)
+        } catch let error as LanguageModelSession.GenerationError {
+            throw Self.map(error)
+        } catch {
+            throw ReflectionUnavailable.failed(error.localizedDescription)
+        }
+    }
+
+    func insight(for context: UnpackContext) async throws -> UnpackInsight {
+        if case .failure(let reason) = availability { throw reason }
+
+        let session = LanguageModelSession(instructions: Self.unpackInstructions)
+
+        do {
+            let response = try await session.respond(
+                to: """
+                    \(Self.contextPrompt(context))
+
+                    Reflect back, in one sentence, what they want to say.
+                    """,
+                generating: UnpackInsightOutput.self,
+                // Low: this sentence is handed to the user as "here is what I
+                // heard", so it needs to be faithful rather than interesting.
+                options: GenerationOptions(temperature: 0.4)
+            )
+            return UnpackInsight(
+                text: response.content.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        } catch let error as LanguageModelSession.GenerationError {
+            throw Self.map(error)
+        } catch {
+            throw ReflectionUnavailable.failed(error.localizedDescription)
+        }
+    }
+
+    func express(
+        for context: UnpackContext,
+        insight: UnpackInsight,
+        style: ExpressionStyle?
+    ) async throws -> Reflection {
+        if case .failure(let reason) = availability { throw reason }
+
+        // The rewrite instructions, not the unpack ones: this step *is*
+        // writing a message, so it wants the "convert accusation into
+        // ownership, add no new facts" rules. Taken warm — a `.long` session
+        // is armed and this prompt always carries the accumulated context, so
+        // it is never the short-draft regime.
+        let session = takeWarmedSession(.long)
+
+        var prompt = """
+            \(Self.contextPrompt(context))
+
+            What they want to say:
+            \(insight.text)
+
+            Write the message they could send.
+            """
+        if let style {
+            // Appended rather than folded into the instructions: instructions
+            // are fixed at session init, and "Try another" has to change the
+            // ask without rebuilding the session it was warmed on.
+            prompt += "\n\n\(style.instruction)"
+        }
+
+        do {
+            let response = try await session.respond(
+                to: prompt,
+                generating: ExpressionOutput.self,
+                options: GenerationOptions(temperature: 0.7)
+            )
+            let output = response.content
+            return Reflection(
+                detectedEmotion: .frustrated,
+                rewrites: [
+                    Rewrite(
+                        id: 0,
+                        text: output.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                        toneLabel: output.toneLabel
+                    )
+                ]
+            )
+        } catch let error as LanguageModelSession.GenerationError {
+            throw Self.map(error)
+        } catch {
+            throw ReflectionUnavailable.failed(error.localizedDescription)
+        }
+    }
+
+    private static func map(_ output: UnpackQuestionOutput) -> UnpackQuestion {
+        // Trimmed and de-duplicated before the clamp: constrained decoding
+        // hits the `.count` guide reliably but says nothing about the entries
+        // being distinct, and two identical options read as a bug.
+        var seen = Set<String>()
+        let options = output.options
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+            .prefix(UnpackQuestion.maxOptions)
+
+        return UnpackQuestion(
+            prompt: output.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            options: Array(options)
+        )
+    }
+}

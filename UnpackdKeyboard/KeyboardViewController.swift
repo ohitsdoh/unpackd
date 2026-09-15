@@ -18,6 +18,13 @@ class KeyboardViewController: KeyboardInputViewController {
     private var session: ReflectSession!
     private var heightConstraint: NSLayoutConstraint?
 
+    #if DEBUG
+    /// Last delta printed by `viewDidLayoutSubviews`, so a steady state stays
+    /// quiet. `.nan` rather than 0 as the initial value: a genuine delta of 0
+    /// is worth seeing once, and `abs(0 - .nan)` is not `< 0.5`, so it prints.
+    private var lastLoggedHeightDelta: CGFloat = .nan
+    #endif
+
     /// Decides when the spacebar should quietly come to life.
     private let heatDetector = HeatDetector()
 
@@ -181,6 +188,35 @@ class KeyboardViewController: KeyboardInputViewController {
         lastNudgedTextHash = nil
     }
 
+    /// Reports the gap between the height we asked for and the frame we got.
+    ///
+    /// DIAGNOSTIC, NOT LOAD-BEARING. `setKeyboardHeight`'s constraint is
+    /// `.defaultHigh` so the system can overrule it, and nothing in the view
+    /// tree ever learns by how much. A non-zero delta here is surplus the
+    /// `Spacer` in `KeyboardRootView` is absorbing; a delta that grows with the
+    /// panel open means the measured panel height is wrong rather than the
+    /// constraint losing. Zero means the frame matches and any remaining seam
+    /// is not a height problem at all.
+    ///
+    /// Logged only where it changes — this fires on every layout pass, and a
+    /// line per pass drowns the rest of the subsystem.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+
+        #if DEBUG
+        guard let requested = heightConstraint?.constant else { return }
+        let actual = view.frame.height
+        let delta = actual - requested
+        guard abs(delta - lastLoggedHeightDelta) > 0.5 else { return }
+        lastLoggedHeightDelta = delta
+        Unpackd.log.debug("""
+            height delta -> requested \(requested, privacy: .public) \
+            actual \(actual, privacy: .public) \
+            delta \(delta, privacy: .public)
+            """)
+        #endif
+    }
+
     override func viewWillSetupKeyboardView() {
         setupKeyboardView { [weak self] controller in
             guard let self else { return AnyView(EmptyView()) }
@@ -201,6 +237,7 @@ class KeyboardViewController: KeyboardInputViewController {
                     onApplyRewrite: { [weak self] text in
                         self?.applyRewrite(text)
                     },
+                    keyboardContext: controller.state.keyboardContext,
                     keyboardView: { reportKeyFrame, spacebarPhase in
                         // The ~48pt above the keys is the autocomplete toolbar
                         // that `KeyboardView(services:)` builds for us, now fed
@@ -236,6 +273,35 @@ class KeyboardViewController: KeyboardInputViewController {
 
     // MARK: - Draft handling
 
+    /// The HOST app's text field — the user's actual draft.
+    ///
+    /// ALWAYS USE THIS, NEVER THE INHERITED `textDocumentProxy`.
+    /// KeyboardKit's `textDocumentProxy` is a *computed* property that returns
+    /// `state.keyboardContext.textInputProxy` whenever the panel's own text
+    /// entry has focus, and the host's proxy otherwise. That is correct for
+    /// typing — keys should go wherever the user is looking — and wrong for
+    /// every single thing this controller does, all of which are about the
+    /// draft in the messaging app.
+    ///
+    /// The failure is silent and was shipped twice: `applyRewrite` deleted from
+    /// the panel's own field, and `currentDraft` saved an "Unpack later" moment
+    /// with an empty draft. Neither errors; both just read or write the wrong
+    /// field.
+    ///
+    /// Named rather than repeating `originalTextDocumentProxy` at each site so
+    /// the *correct* proxy is the one with the obvious name, and so this
+    /// explanation lives somewhere a new call site will find it.
+    ///
+    /// Also beware the controller's inherited `deleteBackward(times:)`, which
+    /// routes through the computed property — call `deleteBackward()` on this
+    /// proxy instead. It cannot be shadowed as `unavailable` to force that:
+    /// it is `open` on `KeyboardInputViewController` and KeyboardKit's own
+    /// backspace handling calls it, so an empty override would break the
+    /// delete key.
+    private var hostProxy: any UITextDocumentProxy {
+        originalTextDocumentProxy
+    }
+
     /// Read what the user has typed so far and open the panel.
     ///
     /// LIMITATION: `documentContextBeforeInput` is not the whole field. iOS
@@ -257,30 +323,43 @@ class KeyboardViewController: KeyboardInputViewController {
 
     @MainActor
     private func beginPractice(_ practice: KeyboardPracticeAction) {
+        // Read only to seal the nudge below — NEITHER practice sends it
+        // anywhere. Remember in particular never touches the draft: the design
+        // is explicit that "nothing is typed or sent, just a moment for you".
         let draft = currentDraft()
         switch practice {
         case .breathe:
             session.beginBreathe()
-        case .rewrite:
-            session.beginRewrite(draft: draft)
+        case .remember:
+            session.remember()
         }
-        // `beginBreathe` and `beginRewrite` both reset presence; see
-        // `beginReflection` for why the draft is sealed with it.
+        // Both reset presence; see `beginReflection` for why the draft is
+        // sealed with it — closing the panel without changing the text should
+        // not immediately re-nudge about the same message.
         lastNudgedTextHash = draft.hashValue
     }
 
     @MainActor
     private func currentDraft() -> String {
-        let proxy = textDocumentProxy
+        let proxy = hostProxy
         let before = proxy.documentContextBeforeInput ?? ""
         let after = proxy.documentContextAfterInput ?? ""
+        // NO LOGGING HERE. This runs from `updatePresence()` on every
+        // debounced text change — i.e. on every keystroke burst — so a log
+        // line costs formatting work on the nudge's hot path to say something
+        // about a draft nobody has acted on. `begin` already logs the draft
+        // length at the moment it actually matters.
         return (before + after).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Replace the user's draft with the chosen rewrite.
     @MainActor
     private func applyRewrite(_ text: String) {
-        let proxy = textDocumentProxy
+        // The panel's field resigns on dismissal anyway, but this runs before
+        // dismissal, and leaving the input proxy set is the documented way to
+        // silently break the user's typing in the host app.
+        state.keyboardContext.textInputProxy = nil
+        let proxy = hostProxy
 
         // Move the cursor to the end so the deletion below covers the draft.
         if let after = proxy.documentContextAfterInput, !after.isEmpty {
@@ -289,9 +368,16 @@ class KeyboardViewController: KeyboardInputViewController {
 
         // There is no "clear field" API for keyboard extensions — deletion is
         // one grapheme at a time, which is why draft length matters here.
-        // KeyboardKit's deleteBackward(times:) batches this for us.
+        //
+        // `proxy.deleteBackward()`, NOT the controller's `deleteBackward(times:)`.
+        // That method is KeyboardKit's and routes through the COMPUTED
+        // `textDocumentProxy`, which returns the panel's input proxy whenever
+        // one is set — so it would delete from whichever field happened to be
+        // focused rather than from the one this method just named. Every write
+        // here names its target, so the method is correct on its own terms
+        // rather than by an undocumented coupling to the line above.
         let existing = proxy.documentContextBeforeInput ?? ""
-        deleteBackward(times: existing.count)
+        for _ in 0..<existing.count { proxy.deleteBackward() }
 
         proxy.insertText(text)
 
@@ -442,7 +528,7 @@ extension KeyboardApp {
     static var unpackd: KeyboardApp {
         .init(
             name: "Unpackd",
-            appGroupId: "group.com.hoamedigital.unpackd",
+            appGroupId: AppGroup.identifier,
             locales: [.english]
         )
     }
