@@ -66,6 +66,21 @@ final class TextCheckerAutocompleteService: @preconcurrency AutocompleteService 
     /// type), which is what UIKit's annotation on `UITextChecker` asks for.
     private let checker: UITextChecker
 
+    /// Suppresses suggestion work entirely while the reflect panel is open.
+    ///
+    /// The panel already hides the toolbar (see `toolbar:` in
+    /// KeyboardViewController), but hiding the VIEW does not stop the WORK:
+    /// KeyboardKit's action handler still calls `autocomplete(_:)` on every
+    /// text change, so `UITextChecker` ran a full lexicon lookup per keystroke
+    /// and the result was discarded. That is main-actor work in the exact
+    /// window a Foundation Models call is in flight and the main actor is
+    /// contended.
+    ///
+    /// Suppressing at the source rather than at the view is also the honest
+    /// place for it: with the panel open the proxy may be the panel's own
+    /// field, so the suggestions were not even for the host's draft.
+    var isSuppressed = false
+
     /// Words the user has explicitly rejected, and words they have taught us.
     ///
     /// These are per-session only. Persisting them means a shared container,
@@ -96,6 +111,11 @@ final class TextCheckerAutocompleteService: @preconcurrency AutocompleteService 
     /// note above for why that is the only arrangement that compiles.
     @MainActor
     func autocomplete(_ text: String) async throws -> AutocompleteResult {
+        // Before any UITextChecker work — see `isSuppressed`.
+        guard !isSuppressed else {
+            return .init(inputText: text, suggestions: [])
+        }
+
         let word = Self.currentWord(in: text)
 
         // Just after a space there is no partial word to complete, so this is

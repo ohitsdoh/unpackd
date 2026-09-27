@@ -287,6 +287,23 @@ final class ReflectSession {
 
     var isOpen: Bool { phase != .idle }
 
+    /// Notified whenever the panel opens or closes.
+    ///
+    /// Set by the controller so suggestion work can be suppressed while the
+    /// panel is up — hiding the toolbar VIEW does not stop KeyboardKit calling
+    /// the autocomplete service on every text change. Kept as a callback rather
+    /// than a direct reference so the session stays ignorant of autocomplete;
+    /// it owns panel state, not the keyboard's services.
+    var onOpenChange: ((Bool) -> Void)?
+
+    /// The single place `phase` is written, so `onOpenChange` cannot be missed
+    /// by a new call site — the same argument as `resetFlowState`.
+    private func setPhase(_ new: Phase) {
+        let wasOpen = isOpen
+        phase = new
+        if isOpen != wasOpen { onOpenChange?(isOpen) }
+    }
+
     /// Open the panel on `phase`, clearing the previous moment first.
     ///
     /// The practice keys (Breathe, Remember) each used to do this by hand and
@@ -300,7 +317,7 @@ final class ReflectSession {
         resetFlowState(for: draft)
         cancelHold()
         presence = .rest
-        self.phase = phase
+        setPhase(phase)
     }
 
     /// Return every piece of per-moment state to its starting value.
@@ -372,7 +389,7 @@ final class ReflectSession {
     func dismiss() {
         task?.cancel()
         task = nil
-        phase = .idle
+        setPhase(.idle)
         resetFlowState(for: "")
         cancelHold()
     }

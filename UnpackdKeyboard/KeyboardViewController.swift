@@ -16,6 +16,16 @@ class KeyboardViewController: KeyboardInputViewController {
     private let engine: ReflectionEngine = FoundationModelsRewriter()
 
     private var session: ReflectSession!
+
+    /// Held so suggestion work can be suppressed while the panel is open.
+    /// `services.autocompleteService` is the protocol type, which has no
+    /// suppression concept — this is the concrete one we installed.
+    private var autocomplete: TextCheckerAutocompleteService?
+
+    /// Fallback for `AutocompleteToolbarStyle.height`, which is optional.
+    /// `.frame(height: nil)` means "no constraint", so a nil there would
+    /// reserve nothing and let the keys jump when the panel opens.
+    private static let standardToolbarHeight: CGFloat = 48
     private var heightConstraint: NSLayoutConstraint?
 
     #if DEBUG
@@ -74,9 +84,20 @@ class KeyboardViewController: KeyboardInputViewController {
         // Autocomplete has to be installed before the action handler, because
         // StandardKeyboardActionHandler captures `autocompleteService` at init.
         // Assigning it afterwards leaves the handler holding the disabled one.
-        services.autocompleteService = TextCheckerAutocompleteService(
+        let autocomplete = TextCheckerAutocompleteService(
             locale: state.keyboardContext.locale
         )
+        services.autocompleteService = autocomplete
+        self.autocomplete = autocomplete
+
+        // Stop suggestion work at the SOURCE while the panel is up. The
+        // `toolbar:` builder hides the strip, but KeyboardKit still calls the
+        // service on every text change, so UITextChecker ran a full lexicon
+        // lookup per keystroke and the result was discarded — main-actor work
+        // in exactly the window a Foundation Models call is in flight.
+        session.onOpenChange = { [weak autocomplete] isOpen in
+            autocomplete?.isSuppressed = isOpen
+        }
 
         // Autocorrect is opt-in per keyboard, and defaults off in a fresh
         // install. The pipeline in StandardKeyboardActionHandler checks these
@@ -271,40 +292,37 @@ class KeyboardViewController: KeyboardInputViewController {
                             // through so the standard behaviour is preserved.
                             collapsedView: { $0.view },
                             emojiKeyboard: { $0.view },
-                            // THE PREDICTIVE STRIP IS HIDDEN WHILE THE PANEL IS
-                            // OPEN — and replaced by a spacer of its exact
-                            // height, not removed.
+                            // The predictive strip is hidden while the panel
+                            // is open, and its height reserved so the keys do
+                            // not move.
                             //
-                            // This is the "lip" above the panel. It was never a
-                            // seam between two dark surfaces: it is the real,
-                            // working autocomplete toolbar — its background and
-                            // its hairline separators — still rendering
-                            // underneath the card. `KeyboardView` builds it
-                            // unconditionally, and nothing here had ever told it
-                            // that a sheet was covering the input context.
+                            // NOT a fix for the "lip" — an earlier version of
+                            // this comment claimed it was, and that was wrong:
+                            // the band is visible with the panel CLOSED, so it
+                            // was never this strip. This is kept on its own
+                            // merits. Suggestions are meaningless here: the
+                            // panel is not a text field, and while the panel's
+                            // own entry has focus the proxy is not even the
+                            // host's, so the strip predicts for a field nobody
+                            // is typing in.
                             //
-                            // Suggestions are meaningless in this state anyway:
-                            // the panel is not a text field, and while the
-                            // panel's own entry has focus the proxy is not even
-                            // the host's, so the strip is predicting for a field
-                            // the user is not typing in.
-                            //
-                            // WHY A SPACER RATHER THAN NOTHING
+                            // WHY A SPACER RATHER THAN EmptyView
                             // The strip's height is inside the measured
-                            // `keyboardHeight` that grows the extension's frame.
-                            // Returning EmptyView collapses it, so the keys jump
-                            // up ~48pt at the exact moment the panel opens —
-                            // trading a static seam for a moving one. Reserving
-                            // the same height keeps the keys perfectly still and
-                            // lets the panel's own background own that band.
+                            // `keyboardHeight` that grows the extension's frame,
+                            // so collapsing it makes the keys jump at the moment
+                            // the panel opens. `style.height` is OPTIONAL and
+                            // `.frame(height:)` treats nil as "no constraint" —
+                            // which would reserve nothing and reintroduce the
+                            // jump — so nil falls back to the standard strip
+                            // height rather than being passed through.
                             //
-                            // `style.height` is KeyboardKit's own metric, so
-                            // this tracks whatever the device and appearance
-                            // actually use instead of hardcoding 48.
+                            // Hiding the view does not stop the WORK; see
+                            // `TextCheckerAutocompleteService.isSuppressed`,
+                            // which the session drives.
                             toolbar: { params in
                                 if session.isOpen {
                                     Color.clear
-                                        .frame(height: params.style.height)
+                                        .frame(height: params.style.height ?? Self.standardToolbarHeight)
                                 } else {
                                     params.view
                                 }

@@ -132,86 +132,23 @@ struct KeyboardRootView<KeyboardView: View>: View {
         // the keys to reach the keyboard's edges. As a transition on the panel
         // it could only ever mask the panel's own bounds. See RadialWash.
         ZStack {
-            // The keyboard's own background, painted here rather than by
-            // KeyboardView.
+            // NO BACKGROUND IS PAINTED HERE — `KeyboardViewStyle.standard`
+            // paints it, as it does on a stock keyboard.
             //
-            // WHY IT MOVED
-            // `KeyboardViewStyle.standard` paints an OPAQUE background behind
-            // the keys, and `KeyboardView` sits above the glow layers in this
-            // stack — so that background covered every ripple and the wash
-            // completely. The symptom is not "the glow looks wrong", it is
-            // "the keyboard never glows", because nothing was ever visible.
+            // This file used to suppress KeyboardKit's background with
+            // `keyboardViewBackground(.hidden)` and paint a replacement, purely
+            // to get the glow layers UNDER the keys. That bought z-order and
+            // cost the style's `backgroundCornerRadiusTop` — the rounded top
+            // edge the system draws. The resulting seam between our flat fill
+            // and the system's container is the "lip", and it survived six
+            // attempts to fix it by changing the fill, because the fill was
+            // never the variable: `Color.keyboardBackground` is KeyboardKit's
+            // OWN token, so the override was repainting the framework's colour
+            // in the place the framework would have painted it anyway.
             //
-            // So the background is drawn first, at the bottom of the stack, and
-            // `keyboardViewBackground(.hidden)` below stops KeyboardView from
-            // drawing its own on top. The glow then sits between the background
-            // and the keys, which is where light spilling from a key belongs.
-            // NO FULL-STACK BACKGROUND FILL.
-            //
-            // This is the lip, and it took four wrong fixes to find because
-            // every one of them assumed the band was something ELSE showing
-            // through our content. A probe that painted the host UIInputView
-            // magenta came back with no magenta anywhere on screen, which
-            // proved the band is not the host view and not the system backdrop:
-            // it is drawn by us, inside this SwiftUI tree.
-            //
-            // The mechanism: `setKeyboardHeight` installs a `.defaultHigh`
-            // (deliberately losable) constraint, so iOS routinely grants a
-            // frame TALLER than `keyboardHeight + panelHeight`. The `Spacer`
-            // below pushes that surplus to the top of the VStack — and a fill
-            // spanning the whole ZStack painted keyboard-coloured pixels into
-            // it. The surplus is not part of the keyboard, so painting it is
-            // what creates a band above the suggestion strip.
-            //
-            // The fix is to let the surplus stay TRANSPARENT and attach the
-            // background to the content that actually needs one — see the
-            // `.background` on the VStack below. Nothing else needs a fill:
-            // the glow layers sit between that background and the keys exactly
-            // as before, because they are still above it in this stack.
-
-            // ONE UNIFORM SURFACE, EDGE TO EDGE — MATCHING STOCK.
-            //
-            // Comparing against the system keyboard settled this after five
-            // wrong fixes. The stock keyboard has the SAME rounded-top dark
-            // container; it is system chrome, not something we draw, and it is
-            // not removable. The difference was that stock is ONE continuous
-            // dark from that rounded top down through the suggestion row into
-            // the keys, whereas ours had a visible STEP partway down — the
-            // system's backdrop showing above our fill in a slightly different
-            // shade. That step is the lip.
-            //
-            // So the fill must cover the whole container rather than stopping
-            // at our content. Every earlier attempt made it SMALLER (matching
-            // the content, adding a corner radius, insetting the panel), which
-            // is why none of them worked and the previous one made the step
-            // more pronounced.
-            //
-            // `.ignoresSafeArea()` on all edges is deliberate and load-bearing
-            // here: the fill has to reach under the system's own rounded top
-            // edge so no band of its backdrop is left showing.
-            // EXPERIMENT — NOT THE FINAL STATE.
-            //
-            // Testing whether we need to paint a background AT ALL. The system
-            // draws its own container behind any keyboard (confirmed: the stock
-            // keyboard has the identical rounded-top surface). If that backdrop
-            // is already the right colour, then every fill we add can only
-            // DIFFER from it — which is exactly the step that has survived six
-            // attempts to remove it.
-            //
-            // `.clear` lets the system's own container show through everywhere.
-            // If the lip vanishes, the fix is to stop painting and let
-            // `keyboardViewBackground(.hidden)` be reverted too. If the glow
-            // disappears instead, we learn the fill is load-bearing and the
-            // answer is to match its colour to the system's precisely.
-            Color.clear
-                .ignoresSafeArea()
-
-            // Beneath the keys, above the background: light spilling from the
-            // spacebar should pass *behind* its neighbours, not over them.
-            RadialWash(
-                progress: (session.isOpen && hasMeasuredKey) ? 1 : 0,
-                keyFrame: keyFrame
-            )
+            // The glow keeps its z-order without the override — RadialWash is
+            // now a `.background` on the keys (see below), which composites
+            // beneath them while the style's own background still paints.
 
             VStack(spacing: 0) {
                 // Absorbs any gap between the height we ask for and the frame
@@ -223,15 +160,9 @@ struct KeyboardRootView<KeyboardView: View>: View {
                 // frame can be taller than `keyboardHeight + panelHeight`. With
                 // the VStack centred, that surplus split above and below the
                 // keys. Bottom-aligning puts the whole surplus at the top,
-                // where it is now TRANSPARENT — the background is attached to
-                // this VStack rather than to the whole ZStack, so a mismatch
-                // shows the host app instead of a slab of keyboard colour.
-                // Painting that surplus is what the lip was.
+                // where nothing paints it.
                 //
                 // `minLength: 0` so this costs nothing when the frame matches.
-                // Transparent by construction now: the background below is
-                // attached beneath this Spacer, so surplus frame height shows
-                // the host app rather than a slab of keyboard colour.
                 Spacer(minLength: 0)
 
                 if session.isOpen {
@@ -271,6 +202,23 @@ struct KeyboardRootView<KeyboardView: View>: View {
                     // all of which the system already gets right, and gets
                     // right on devices this was never checked on.
                     keyboardView({ keyFrame = $0 }, driftPhase(at: timeline.date))
+                        // Light spilling from the spacebar must pass BEHIND its
+                        // neighbours, not over them — measured: as a sibling
+                        // above the keys it took a neighbouring key from 0.30 to
+                        // 0.72 luminance, i.e. the keys got brighter and hazier,
+                        // the opposite of "surrounding keys soften and recede".
+                        //
+                        // `.background` composites beneath the keys WITHOUT
+                        // suppressing the style's own background, which is the
+                        // whole reason the override is gone: same z-order, one
+                        // modifier, and `KeyboardViewStyle.standard` still
+                        // paints its corner radii and insets.
+                        .background(
+                            RadialWash(
+                                progress: (session.isOpen && hasMeasuredKey) ? 1 : 0,
+                                keyFrame: keyFrame
+                            )
+                        )
                         // Make KeyboardKit's long-press fire at exactly the
                         // moment our ramp completes.
                         //
@@ -289,10 +237,6 @@ struct KeyboardRootView<KeyboardView: View>: View {
                         .keyboardGestureConfiguration(
                             .init(longPressDelay: HoldTiming.holdDuration)
                         )
-                        // See the background note at the top of the ZStack:
-                        // without this the standard opaque background draws
-                        // over every glow layer beneath it.
-                        .keyboardViewBackground(.hidden)
                         .keyboardButtonStyle(
                             builder: KeyboardTheme.styleBuilder(
                                 intensity: session.spacebarIntensity,
