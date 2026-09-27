@@ -31,6 +31,7 @@ struct KeyboardRootView<KeyboardView: View>: View {
     /// per appearance — see `KeyboardTheme.irisGradient`.
     @Environment(\.colorScheme) private var colorScheme
 
+
     /// The spacebar's measured frame, reported by `SpacebarWordmark` from
     /// inside the real key. Every glow effect is positioned from this — see
     /// `RadialWash.coordinateSpace` for why none of it is estimated.
@@ -145,7 +146,64 @@ struct KeyboardRootView<KeyboardView: View>: View {
             // `keyboardViewBackground(.hidden)` below stops KeyboardView from
             // drawing its own on top. The glow then sits between the background
             // and the keys, which is where light spilling from a key belongs.
-            Color.keyboardBackground(for: colorScheme)
+            // NO FULL-STACK BACKGROUND FILL.
+            //
+            // This is the lip, and it took four wrong fixes to find because
+            // every one of them assumed the band was something ELSE showing
+            // through our content. A probe that painted the host UIInputView
+            // magenta came back with no magenta anywhere on screen, which
+            // proved the band is not the host view and not the system backdrop:
+            // it is drawn by us, inside this SwiftUI tree.
+            //
+            // The mechanism: `setKeyboardHeight` installs a `.defaultHigh`
+            // (deliberately losable) constraint, so iOS routinely grants a
+            // frame TALLER than `keyboardHeight + panelHeight`. The `Spacer`
+            // below pushes that surplus to the top of the VStack — and a fill
+            // spanning the whole ZStack painted keyboard-coloured pixels into
+            // it. The surplus is not part of the keyboard, so painting it is
+            // what creates a band above the suggestion strip.
+            //
+            // The fix is to let the surplus stay TRANSPARENT and attach the
+            // background to the content that actually needs one — see the
+            // `.background` on the VStack below. Nothing else needs a fill:
+            // the glow layers sit between that background and the keys exactly
+            // as before, because they are still above it in this stack.
+
+            // ONE UNIFORM SURFACE, EDGE TO EDGE — MATCHING STOCK.
+            //
+            // Comparing against the system keyboard settled this after five
+            // wrong fixes. The stock keyboard has the SAME rounded-top dark
+            // container; it is system chrome, not something we draw, and it is
+            // not removable. The difference was that stock is ONE continuous
+            // dark from that rounded top down through the suggestion row into
+            // the keys, whereas ours had a visible STEP partway down — the
+            // system's backdrop showing above our fill in a slightly different
+            // shade. That step is the lip.
+            //
+            // So the fill must cover the whole container rather than stopping
+            // at our content. Every earlier attempt made it SMALLER (matching
+            // the content, adding a corner radius, insetting the panel), which
+            // is why none of them worked and the previous one made the step
+            // more pronounced.
+            //
+            // `.ignoresSafeArea()` on all edges is deliberate and load-bearing
+            // here: the fill has to reach under the system's own rounded top
+            // edge so no band of its backdrop is left showing.
+            // EXPERIMENT — NOT THE FINAL STATE.
+            //
+            // Testing whether we need to paint a background AT ALL. The system
+            // draws its own container behind any keyboard (confirmed: the stock
+            // keyboard has the identical rounded-top surface). If that backdrop
+            // is already the right colour, then every fill we add can only
+            // DIFFER from it — which is exactly the step that has survived six
+            // attempts to remove it.
+            //
+            // `.clear` lets the system's own container show through everywhere.
+            // If the lip vanishes, the fix is to stop painting and let
+            // `keyboardViewBackground(.hidden)` be reverted too. If the glow
+            // disappears instead, we learn the fill is load-bearing and the
+            // answer is to match its colour to the system's precisely.
+            Color.clear
                 .ignoresSafeArea()
 
             // Beneath the keys, above the background: light spilling from the
@@ -164,14 +222,16 @@ struct KeyboardRootView<KeyboardView: View>: View {
                 // `.defaultHigh` constraint — deliberately losable — so the real
                 // frame can be taller than `keyboardHeight + panelHeight`. With
                 // the VStack centred, that surplus split above and below the
-                // keys, and the band above showed the system keyboard backdrop's
-                // rounded top edge through it: the "ledge" over the suggestion
-                // bar. Bottom-aligning puts the whole surplus at the top, where
-                // `Color.keyboardBackground` at the base of this stack already
-                // paints it, so a mismatch degrades to a slightly taller
-                // keyboard instead of a visible seam.
+                // keys. Bottom-aligning puts the whole surplus at the top,
+                // where it is now TRANSPARENT — the background is attached to
+                // this VStack rather than to the whole ZStack, so a mismatch
+                // shows the host app instead of a slab of keyboard colour.
+                // Painting that surplus is what the lip was.
                 //
                 // `minLength: 0` so this costs nothing when the frame matches.
+                // Transparent by construction now: the background below is
+                // attached beneath this Spacer, so surplus frame height shows
+                // the host app rather than a slab of keyboard colour.
                 Spacer(minLength: 0)
 
                 if session.isOpen {
@@ -345,7 +405,25 @@ struct KeyboardRootView<KeyboardView: View>: View {
         // growing, and a little softness there is what stops the host app's
         // content from snapping upward. Deliberately quicker than the wash, so
         // the panel has settled into place by the time the circle reaches it.
-        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: panelHeight)
+        // Matched to the wash's own curve rather than a spring of its own.
+        //
+        // These two drive ONE visual event — the panel arriving — and they were
+        // on different curve *shapes*: the fade on `.easeOut(0.32)` keyed to
+        // `isOpen`, the frame on a spring keyed to `panelHeight`. A spring and
+        // an ease starting together do not stay together in the middle even
+        // when their durations match, so the card faded in slightly out of step
+        // with the frame that was growing to hold it. That mismatch is most of
+        // what reads as "not smooth".
+        //
+        // A spring was also the wrong instinct here: it overshoots, and the
+        // thing being animated is the HOST APP's content getting pushed up. A
+        // conversation transcript that bounces past its resting position and
+        // settles back reads as a glitch in Messages, not as polish in our
+        // keyboard.
+        //
+        // Slightly longer than the fade so the frame is never the thing still
+        // catching up when the card is already fully opaque.
+        .animation(.easeOut(duration: 0.34), value: panelHeight)
         .onChange(of: keyboardHeight + (session.isOpen ? panelHeight : 0)) { _, total in
             guard total > 0 else { return }
             onHeightChange(total)

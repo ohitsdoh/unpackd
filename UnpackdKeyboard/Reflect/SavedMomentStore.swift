@@ -70,21 +70,46 @@ enum SavedMomentStore {
             storeLog.error("savedMoments: refusing to save an empty moment")
             return
         }
-        guard let defaults else {
-            storeLog.error("savedMoments: app group unavailable, not saving")
-            return
-        }
         var moments = load()
         moments.insert(moment, at: 0)
         if moments.count > limit {
             moments = Array(moments.prefix(limit))
         }
-        do {
-            let data = try JSONEncoder().encode(moments)
-            defaults.set(data, forKey: key)
-        } catch {
-            storeLog.error("savedMoments: encode failed")
+        write(moments, operation: "save")
+    }
+
+    /// The one write path.
+    ///
+    /// `save` and `delete` both had their own copy of guard-encode-set-log,
+    /// with error strings that had already drifted apart. Anything that
+    /// changes about how these are persisted — moving off `UserDefaults`,
+    /// re-reading before writing, changing the encoder — is one edit here
+    /// rather than two that must agree.
+    private static func write(_ moments: [SavedMoment], operation: String) {
+        guard let defaults else {
+            storeLog.error("savedMoments: app group unavailable, not \(operation, privacy: .public)")
+            return
         }
+        do {
+            defaults.set(try JSONEncoder().encode(moments), forKey: key)
+        } catch {
+            storeLog.error("savedMoments: encode failed during \(operation, privacy: .public)")
+        }
+    }
+
+    /// Remove one moment.
+    ///
+    /// The app owns deletion: the keyboard only ever appends. Takes an id
+    /// rather than an index because the list is re-read from disk on every
+    /// appearance, so an index the view captured can be stale by the time the
+    /// user swipes.
+    static func delete(id: UUID) {
+        let all = load()
+        let remaining = all.filter { $0.id != id }
+        // Nothing removed, nothing to write — deleting an id that is not there
+        // should not re-encode and rewrite the whole blob.
+        guard remaining.count != all.count else { return }
+        write(remaining, operation: "delete")
     }
 
     /// Every saved moment, newest first.

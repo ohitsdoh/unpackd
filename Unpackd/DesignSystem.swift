@@ -146,3 +146,72 @@ struct SectionEyebrow: View {
             .foregroundStyle(UnpackdStyle.muted)
     }
 }
+
+/// Swipe-left-to-delete for a row inside a `BrandSurface` card.
+///
+/// WHY THIS IS HAND-ROLLED
+/// `.swipeActions` requires a `List`, and these rows live in cards inside the
+/// page's own `ScrollView` — nesting a `List` there would fight the page for
+/// scrolling. So the gesture is ours.
+///
+/// WHY IT IS A MODIFIER RATHER THAN A COPY PER ROW
+/// Both saved-item lists in the app (moments and remembered thoughts) need the
+/// same affordance. Written twice, the thresholds and the reveal width drift,
+/// and only one of them gets the next fix — the single-open-row rule, say, or
+/// VoiceOver actions, neither of which a hand-rolled swipe gets for free.
+///
+/// The row keeps its own accessibility route to deletion: a swipe is invisible
+/// to VoiceOver, so `deleteLabel` is also exposed as a custom action.
+struct SwipeToDelete: ViewModifier {
+    let onDelete: () -> Void
+
+    @State private var offset: CGFloat = 0
+
+    /// How far left the row sits when the action is showing.
+    private let revealed: CGFloat = -76
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .trailing) {
+            Button(role: .destructive, action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(UnpackdStyle.paper)
+                    .frame(width: 60, height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.red)
+                    )
+            }
+            .buttonStyle(.plain)
+            .opacity(offset < -12 ? 1 : 0)
+            .accessibilityHidden(true)
+
+            content
+                .background(UnpackdStyle.paper)
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 14)
+                        .onChanged { value in
+                            // Left only, and never past the action's width — a
+                            // row that can be flung off-screen reads as a bug
+                            // rather than an affordance.
+                            offset = max(revealed, min(0, value.translation.width))
+                        }
+                        .onEnded { value in
+                            withAnimation(.snappy(duration: 0.22)) {
+                                offset = value.translation.width < revealed / 2 ? revealed : 0
+                            }
+                        }
+                )
+                // The swipe itself is unreachable without sight of it.
+                .accessibilityAction(named: "Delete", onDelete)
+        }
+    }
+}
+
+extension View {
+    /// See `SwipeToDelete`.
+    func swipeToDelete(perform onDelete: @escaping () -> Void) -> some View {
+        modifier(SwipeToDelete(onDelete: onDelete))
+    }
+}

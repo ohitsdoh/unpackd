@@ -73,6 +73,18 @@ struct SavedMoment: Codable, Equatable, Identifiable {
     var isWorthKeeping: Bool {
         !draft.isBlank || !answers.isEmpty
     }
+
+    /// What "Copy" should put on the clipboard.
+    ///
+    /// Beside `isWorthKeeping` on purpose: that rule guarantees a stored
+    /// moment has a draft OR answers, so this is the other half of the same
+    /// decision and the view never has to re-derive it. When the view checked
+    /// `draft.isBlank` itself, an answers-only moment rendered a disabled
+    /// button — a row the store had agreed to keep, offering nothing back,
+    /// while the section header promised otherwise.
+    var copyText: String {
+        draft.isBlank ? answers.map(\.response).joined(separator: "\n") : draft
+    }
 }
 
 /// Whether a string is empty once surrounding whitespace is discounted.

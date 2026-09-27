@@ -214,6 +214,7 @@ class KeyboardViewController: KeyboardInputViewController {
             actual \(actual, privacy: .public) \
             delta \(delta, privacy: .public)
             """)
+
         #endif
     }
 
@@ -263,7 +264,51 @@ class KeyboardViewController: KeyboardInputViewController {
                                     params.view
                                 }
                             },
-                            buttonView: { $0.view }
+                            buttonView: { $0.view },
+                            // Handed straight back. Supplying `toolbar:` means
+                            // the full initialiser, which has no defaults for
+                            // these two — they are not customised, just passed
+                            // through so the standard behaviour is preserved.
+                            collapsedView: { $0.view },
+                            emojiKeyboard: { $0.view },
+                            // THE PREDICTIVE STRIP IS HIDDEN WHILE THE PANEL IS
+                            // OPEN — and replaced by a spacer of its exact
+                            // height, not removed.
+                            //
+                            // This is the "lip" above the panel. It was never a
+                            // seam between two dark surfaces: it is the real,
+                            // working autocomplete toolbar — its background and
+                            // its hairline separators — still rendering
+                            // underneath the card. `KeyboardView` builds it
+                            // unconditionally, and nothing here had ever told it
+                            // that a sheet was covering the input context.
+                            //
+                            // Suggestions are meaningless in this state anyway:
+                            // the panel is not a text field, and while the
+                            // panel's own entry has focus the proxy is not even
+                            // the host's, so the strip is predicting for a field
+                            // the user is not typing in.
+                            //
+                            // WHY A SPACER RATHER THAN NOTHING
+                            // The strip's height is inside the measured
+                            // `keyboardHeight` that grows the extension's frame.
+                            // Returning EmptyView collapses it, so the keys jump
+                            // up ~48pt at the exact moment the panel opens —
+                            // trading a static seam for a moving one. Reserving
+                            // the same height keeps the keys perfectly still and
+                            // lets the panel's own background own that band.
+                            //
+                            // `style.height` is KeyboardKit's own metric, so
+                            // this tracks whatever the device and appearance
+                            // actually use instead of hardcoding 48.
+                            toolbar: { params in
+                                if session.isOpen {
+                                    Color.clear
+                                        .frame(height: params.style.height)
+                                } else {
+                                    params.view
+                                }
+                            }
                         )
                     }
                 )

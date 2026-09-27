@@ -79,7 +79,15 @@ struct ReflectPanel: View {
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(KeyboardTheme.panelBackground)
-                .shadow(color: .black.opacity(0.12), radius: 18, y: 5)
+                // Two shadows, not one. A single soft shadow at radius 18
+                // spreads far enough to look like haze rather than lift, and
+                // on the dark keyboard ground it barely registers at all — the
+                // card looked pasted on rather than resting above.
+                //
+                // The wide pass carries the ambient lift; the tight pass
+                // gives the contact edge something to sit on.
+                .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
+                .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
         )
         .overlay(
             // A literal white hairline read as a bright halo on the dark
@@ -88,6 +96,12 @@ struct ReflectPanel: View {
                 .stroke(KeyboardTheme.border, lineWidth: 0.75)
         )
         .padding(.horizontal, 8)
+        // No top inset. The band above the card is the reserved
+        // autocomplete-strip height (see `toolbar:` in
+        // KeyboardViewController), which the panel's own background covers.
+        // An inset here was added while the visible strip was misdiagnosed as
+        // a colour seam; with the strip actually hidden it only reopens the
+        // gap it was meant to close.
         .padding(.bottom, 10)
         // One animation for the whole panel, driven by the phase.
         //

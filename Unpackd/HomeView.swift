@@ -164,6 +164,31 @@ private struct InsightsView: View {
     /// are not looking at this screen at the time.
     @State private var moments: [SavedMoment] = []
 
+    /// Remove a moment, updating the view from the store's own answer rather
+    /// than from a local mutation — the store is the source of truth and the
+    /// list is re-read everywhere else.
+    /// Re-read the list from the store.
+    ///
+    /// The store is the source of truth and the keyboard writes to it from
+    /// another process, so every path re-reads rather than mutating a local
+    /// copy — including delete, where trusting a local `remove` would diverge
+    /// from disk the moment a write failed.
+    private func reload() {
+        moments = SavedMomentStore.load()
+    }
+
+    private func delete(_ moment: SavedMoment) {
+        SavedMomentStore.delete(id: moment.id)
+        // Removed locally rather than re-read: `delete` has already decoded,
+        // filtered and re-encoded, so a second full decode would only confirm
+        // what this path just caused. `.onAppear` and the foreground reload
+        // cover every case where the store could have diverged underneath us —
+        // this is the one where it cannot. Matches `PracticesView.remove`.
+        withAnimation(.snappy(duration: 0.24)) {
+            moments.removeAll { $0.id == moment.id }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -209,15 +234,21 @@ private struct InsightsView: View {
                                 // Nothing is stored unless the user taps
                                 // "Unpack later" — see SavedMomentStore for
                                 // why that is the only write in the keyboard.
-                                Text("When you tap \u{201C}Unpack later\u{201D} on the keyboard, the moment is saved here so you can come back to it.")
+                                Text("When you tap \u{201C}Unpack later\u{201D} on the keyboard, the draft is saved here. Copy it back into the conversation when you have more space.")
                                     .font(Typography.inter(14))
                                     .foregroundStyle(UnpackdStyle.muted)
                                     .lineSpacing(3)
                             } else {
                                 Text("Saved for later.")
                                     .font(Typography.inter(19, .semibold))
+                                Text("Copy one back into the conversation when you have more space.")
+                                    .font(Typography.inter(13))
+                                    .foregroundStyle(UnpackdStyle.muted)
+                                    .padding(.bottom, 2)
                                 ForEach(moments) { moment in
-                                    SavedMomentRow(moment: moment)
+                                    SavedMomentRow(moment: moment) {
+                                        delete(moment)
+                                    }
                                 }
                             }
                         }
@@ -234,13 +265,13 @@ private struct InsightsView: View {
             // realistic path is "type elsewhere, save, come back here" —
             // and `onAppear` alone would leave this screen stale for anyone
             // who had already visited it this session.
-            .onAppear { moments = SavedMomentStore.load() }
+            .onAppear { reload() }
             .onReceive(
                 NotificationCenter.default.publisher(
                     for: UIApplication.willEnterForegroundNotification
                 )
             ) { _ in
-                moments = SavedMomentStore.load()
+                reload()
             }
         }
     }
@@ -248,8 +279,15 @@ private struct InsightsView: View {
 
 /// One saved moment: the draft they stepped away from, and anything they had
 /// already worked out about it.
+///
+/// Copy is the honest version of "come back to it later": an app cannot type
+/// into another app's text field, so handing the draft to the clipboard is the
+/// most direct route back into the conversation that exists.
 private struct SavedMomentRow: View {
     let moment: SavedMoment
+    let onDelete: () -> Void
+
+    @State private var didCopy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -270,17 +308,53 @@ private struct SavedMomentRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text(moment.savedAt.formatted(.relative(presentation: .named)))
-                .font(Typography.inter(12))
-                .foregroundStyle(UnpackdStyle.muted)
+            HStack(spacing: 10) {
+                Text(moment.savedAt.formatted(.relative(presentation: .named)))
+                    .font(Typography.inter(12))
+                    .foregroundStyle(UnpackdStyle.muted)
+
+                Spacer(minLength: 0)
+
+                Button(action: copy) {
+                    Label(
+                        didCopy ? "Copied" : "Copy",
+                        systemImage: didCopy ? "checkmark" : "doc.on.doc"
+                    )
+                    .font(Typography.inter(12, .semibold))
+                    .foregroundStyle(didCopy ? UnpackdStyle.muted : UnpackdStyle.ink)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 10)
+        .contentShape(Rectangle())
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(UnpackdStyle.muted.opacity(0.18))
                 .frame(height: 0.5)
         }
+        .swipeToDelete(perform: onDelete)
+        // `.task(id:)` rather than a bare `Task` in the button action: SwiftUI
+        // cancels and restarts this when `didCopy` changes and tears it down
+        // when the row disappears. An unstructured Task did neither — a second
+        // tap left the first timer running, so the label reverted early, and
+        // navigating away left it ticking against a gone view.
+        .task(id: didCopy) {
+            guard didCopy else { return }
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.snappy(duration: 0.2)) { didCopy = false }
+        }
+    }
+
+    private func copy() {
+        // `copyText`, not `draft`: what is worth copying is a property of the
+        // moment, and `SavedMoment` already owns the rule about what a moment
+        // contains — see `isWorthKeeping` beside it. Re-deriving emptiness here
+        // is how the two drift.
+        UIPasteboard.general.string = moment.copyText
+        withAnimation(.snappy(duration: 0.2)) { didCopy = true }
     }
 }
 
@@ -591,17 +665,11 @@ private struct ThoughtRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(action: onDelete) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(UnpackdStyle.muted)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete")
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .swipeToDelete(perform: onDelete)
     }
 }
 
